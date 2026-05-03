@@ -1,0 +1,353 @@
+{
+  "name": "devin-cli-chat",
+  "displayName": "Devin Cli Chat",
+  "description": "Tela propria de chat para Devin CLI no VS Code, com anexos, agentes, skills Markdown, modelos locais e sessao ancorada no workspace.",
+  "version": "0.21.0",
+  "publisher": "lferrarezi",
+  "author": "Luiz Alberto Abarca Ferrarezi",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "devin",
+    "devin-cli",
+    "chat",
+    "agent",
+    "ia",
+    "luiz-alberto-abarca-ferrarezi",
+    "devin-cli-chat",
+    "chat-proprio",
+    "ferrarezi"
+  ],
+  "activationEvents": [
+    "onView:devinCliChat.chatView",
+    "onCommand:devinCliChat.abrirPainel",
+    "onCommand:devinCliChat.novaSessao",
+    "onCommand:devinCliChat.enviarSelecao",
+    "onCommand:devinCliChat.revisarDiff",
+    "onCommand:devinCliChat.selecionarModelo",
+    "onCommand:devinCliChat.selecionarAgente",
+    "onCommand:devinCliChat.verificarCli",
+    "onCommand:devinCliChat.atualizarModelos",
+    "onCommand:devinCliChat.anexarArquivos",
+    "onCommand:devinCliChat.limparAnexos",
+    "onCommand:devinCliChat.selecionarSkills"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "devinCliChat",
+          "title": "Devin Cli Chat",
+          "icon": "media/devin-cli-chat-activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "devinCliChat": [
+        {
+          "type": "webview",
+          "id": "devinCliChat.chatView",
+          "name": "Devin"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "devinCliChat.abrirPainel",
+        "title": "Devin Cli Chat: Abrir chat",
+        "category": "Devin Cli Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "devinCliChat.novaSessao",
+        "title": "Devin Cli Chat: Nova sessão Devin no workspace",
+        "category": "Devin Cli Chat",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "devinCliChat.enviarSelecao",
+        "title": "Devin Cli Chat: Enviar seleção para o chat",
+        "category": "Devin Cli Chat"
+      },
+      {
+        "command": "devinCliChat.revisarDiff",
+        "title": "Devin Cli Chat: Revisar git diff",
+        "category": "Devin Cli Chat",
+        "icon": "$(git-pull-request)"
+      },
+      {
+        "command": "devinCliChat.selecionarModelo",
+        "title": "Devin Cli Chat: Selecionar modelo",
+        "category": "Devin Cli Chat"
+      },
+      {
+        "command": "devinCliChat.atualizarModelos",
+        "title": "Devin Cli Chat: Atualizar modelos do Devin CLI",
+        "category": "Devin Cli Chat",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "devinCliChat.definirModeloManual",
+        "title": "Devin Cli Chat: Definir modelo manual",
+        "category": "Devin Cli Chat"
+      },
+      {
+        "command": "devinCliChat.selecionarAgente",
+        "title": "Devin Cli Chat: Selecionar agente",
+        "category": "Devin Cli Chat"
+      },
+      {
+        "command": "devinCliChat.verificarCli",
+        "title": "Devin Cli Chat: Verificar Devin CLI",
+        "category": "Devin Cli Chat"
+      },
+      {
+        "command": "devinCliChat.anexarArquivos",
+        "title": "Devin Cli Chat: Anexar arquivos",
+        "category": "Devin Cli Chat",
+        "icon": "$(attach)"
+      },
+      {
+        "command": "devinCliChat.limparAnexos",
+        "title": "Devin Cli Chat: Limpar anexos",
+        "category": "Devin Cli Chat",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "devinCliChat.selecionarSkills",
+        "title": "Devin Cli Chat: Selecionar skills Markdown",
+        "category": "Devin Cli Chat",
+        "icon": "$(book)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "devinCliChat.abrirPainel"
+        },
+        {
+          "command": "devinCliChat.novaSessao"
+        },
+        {
+          "command": "devinCliChat.revisarDiff"
+        },
+        {
+          "command": "devinCliChat.selecionarModelo"
+        },
+        {
+          "command": "devinCliChat.atualizarModelos"
+        },
+        {
+          "command": "devinCliChat.selecionarAgente"
+        },
+        {
+          "command": "devinCliChat.definirModeloManual"
+        },
+        {
+          "command": "devinCliChat.verificarCli"
+        },
+        {
+          "command": "devinCliChat.anexarArquivos"
+        },
+        {
+          "command": "devinCliChat.limparAnexos"
+        },
+        {
+          "command": "devinCliChat.selecionarSkills"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "devinCliChat.enviarSelecao",
+          "when": "editorHasSelection",
+          "group": "devinCliChat@10"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "devinCliChat.revisarDiff",
+          "group": "navigation@90"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Devin Cli Chat",
+      "properties": {
+        "devinCliChat.caminhoDevin": {
+          "type": "string",
+          "default": "devin",
+          "description": "Caminho do executável Devin CLI."
+        },
+        "devinCliChat.argumentosPadrao": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Argumentos adicionados a todas as chamadas do Devin CLI."
+        },
+        "devinCliChat.modelosDisponiveis": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Modelos manuais de fallback usados pelo seletor. A extensao tambem le agent.model em %APPDATA%\\devin\\config.json e interpreta, em modo somente leitura, os caches protobuf model_configs.bin e team_settings.bin do Devin."
+        },
+        "devinCliChat.modeloAtual": {
+          "type": "string",
+          "default": "auto",
+          "description": "Modelo selecionado atualmente. Use auto para nao enviar --model e respeitar o padrao/allowlist do Devin CLI."
+        },
+        "devinCliChat.argumentoModelo": {
+          "type": "string",
+          "default": "--model",
+          "description": "Flag usada para enviar o modelo ao Devin CLI. Nao e enviada quando o modelo atual for auto. Deixe vazio se nao suportado."
+        },
+        "devinCliChat.agenteAtual": {
+          "type": "string",
+          "default": "auto",
+          "description": "Agente Devin selecionado atualmente."
+        },
+        "devinCliChat.diretorioAgentesWorkspace": {
+          "type": "string",
+          "default": ".devin/agents",
+          "description": "Diretório de agentes no workspace."
+        },
+        "devinCliChat.diretorioAgentesGlobal": {
+          "type": "string",
+          "default": "~/.config/devin/agents",
+          "description": "Diretório global de agentes."
+        },
+        "devinCliChat.modoExecucaoChat": {
+          "type": "string",
+          "enum": [
+            "resposta-integrada",
+            "terminal"
+          ],
+          "default": "resposta-integrada",
+          "description": "Define se o chat captura a resposta com devin -p ou abre a chamada no terminal."
+        },
+        "devinCliChat.timeoutChatMs": {
+          "type": "number",
+          "default": 300000,
+          "description": "Timeout das chamadas integradas em milissegundos."
+        },
+        "devinCliChat.prefixoPromptPadrao": {
+          "type": "string",
+          "default": "Responda em português brasileiro. Seja objetivo, cite arquivos concretos e priorize impacto produtivo, segurança, testes e rollback.",
+          "description": "Prefixo aplicado a prompts enviados ao Devin CLI."
+        },
+        "devinCliChat.usarGitBashNoWindows": {
+          "type": "boolean",
+          "default": true,
+          "description": "No Windows, usa Git Bash no terminal integrado para evitar dependência de PowerShell."
+        },
+        "devinCliChat.gitBashPath": {
+          "type": "string",
+          "default": "",
+          "description": "Caminho opcional do bash.exe do Git Bash."
+        },
+        "devinCliChat.nomeTerminal": {
+          "type": "string",
+          "default": "Devin Cli Chat",
+          "description": "Nome do terminal integrado usado pela extensão."
+        },
+        "devinCliChat.descobrirModelosAutomaticamente": {
+          "type": "boolean",
+          "default": true,
+          "description": "Quando habilitado, monta o seletor a partir de config.json, caches locais e modelos manuais. A leitura roda em segundo plano e nao inicia processos externos por padrao."
+        },
+        "devinCliChat.comandoDescobertaModelos": {
+          "type": "string",
+          "default": "",
+          "description": "Comando opcional e explicito para listar modelos. Exemplo: models --json. So e executado quando preenchido."
+        },
+        "devinCliChat.timeoutDescobertaModelosMs": {
+          "type": "number",
+          "default": 2500,
+          "description": "Timeout, em milissegundos, para cada tentativa de descoberta de modelos. Padrao reduzido para evitar travamento do seletor."
+        },
+        "devinCliChat.timeoutTotalDescobertaModelosMs": {
+          "type": "number",
+          "default": 5000,
+          "description": "Orcamento total, em milissegundos, para a descoberta completa de modelos. Impede sequencias longas de fallbacks."
+        },
+        "devinCliChat.usarAcpParaDescobertaModelos": {
+          "type": "boolean",
+          "default": false,
+          "description": "Mantido por compatibilidade. A descoberta padrao da extensao nao usa ACP para evitar travamento em ambientes corporativos."
+        },
+        "devinCliChat.tentarComandosLegadosDescobertaModelos": {
+          "type": "boolean",
+          "default": false,
+          "description": "Tenta comandos legados/nao documentados de listagem de modelos quando ACP e comando customizado falham. Desabilitado por padrao para evitar travamento."
+        },
+        "devinCliChat.cacheModelosMs": {
+          "type": "number",
+          "default": 1800000,
+          "description": "Tempo de cache da lista de modelos detectada automaticamente. Padrao: 30 minutos."
+        },
+        "devinCliChat.arquivosCacheModelos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Arquivos adicionais de cache de modelos do Devin para leitura local. No Windows, a extensao ja tenta %LOCALAPPDATA%\\Devin\\CLI\\model_configs.bin e team_settings.bin automaticamente."
+        },
+        "devinCliChat.limiteBytesCacheModelos": {
+          "type": "number",
+          "default": 5242880,
+          "description": "Tamanho maximo, em bytes, para leitura segura de cada arquivo de cache binario de modelos do Devin. Padrao: 5 MB."
+        },
+        "devinCliChat.diretorioSkillsWorkspace": {
+          "type": "string",
+          "default": ".devin/skills",
+          "description": "Diretório de skills Markdown no workspace. Também são considerados .skills, .agents/skills e .claude/skills."
+        },
+        "devinCliChat.diretorioSkillsGlobal": {
+          "type": "string",
+          "default": "~/.config/devin/skills",
+          "description": "Diretório global de skills Markdown. No Windows, também tenta %APPDATA%\\devin\\skills."
+        },
+        "devinCliChat.skillsAtuais": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Skills Markdown selecionadas atualmente. O conteúdo é incluído no prompt enviado ao Devin CLI."
+        },
+        "devinCliChat.incluirConteudoAgenteSkillNoPrompt": {
+          "type": "boolean",
+          "default": true,
+          "description": "Quando habilitado, inclui o conteúdo dos AGENT.md e SKILL.md selecionados/mentionados no prompt enviado ao Devin CLI."
+        },
+        "devinCliChat.limiteBytesArquivoMd": {
+          "type": "number",
+          "default": 65536,
+          "description": "Limite de bytes lidos de cada arquivo AGENT.md ou SKILL.md incluído no prompt."
+        },
+        "devinCliChat.maximoAnexos": {
+          "type": "number",
+          "default": 10,
+          "description": "Quantidade máxima de arquivos anexados simultaneamente ao chat."
+        },
+        "devinCliChat.limiteBytesAnexo": {
+          "type": "number",
+          "default": 524288,
+          "description": "Limite de bytes lidos de cada arquivo anexado. Arquivos maiores são truncados no prompt."
+        }
+      }
+    }
+  },
+  "icon": "media/devin-cli-chat.png"
+}

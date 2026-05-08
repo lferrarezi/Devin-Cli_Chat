@@ -7,9 +7,17 @@ const os = require('os');
 const cp = require('child_process');
 
 const EXT = 'devinCliChat';
-const FALLBACK_MODELS = ['auto'];
+const VALID_MODELS = ['auto', 'sonnet', 'opus', 'swe', 'gpt'];
+const FALLBACK_MODELS = VALID_MODELS;
+const HISTORY_KEY = 'devinCliChat.chatHistory.v1';
+const MAX_HISTORY = 50;
+const MAX_ATTACHMENT_BYTES = 1024 * 1024;
+const MAX_FOLDER_FILES = 50;
+const ATTACH_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.venv', '__pycache__', '.next', '.nuxt', '.cache', 'target', '.idea']);
+
 let provider;
 let statusBar;
+let extContext;
 
 function cfg() { return vscode.workspace.getConfiguration(EXT); }
 function workspaceRoot() {
@@ -30,7 +38,7 @@ function expandHome(value) {
   return s;
 }
 function resolveMaybe(value) {
-  const expanded = expandEnvPath(expandHome(value));
+  const expanded = expandHome(value);
   if (!expanded) return expanded;
   return path.isAbsolute(expanded) ? expanded : path.join(workspaceRoot() || os.homedir(), expanded);
 }
@@ -43,11 +51,13 @@ function htmlEscape(value) {
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
-function normalizeModel(value) {
-  const s = String(value || '').trim();
-  if (!s || s.toLowerCase() === 'default' || s.toLowerCase() === 'padrao' || s.toLowerCase() === 'padrão') return 'auto';
-  return s;
+function sanitizeModel(value) {
+  const s = String(value || '').trim().toLowerCase();
+  if (!s || s === 'default' || s === 'padrao' || s === 'padrão') return 'auto';
+  return VALID_MODELS.includes(s) ? s : 'auto';
 }
+function normalizeModel(value) { return sanitizeModel(value); }
+function validModelsForUi() { return [...VALID_MODELS]; }
 function readJson(filePath) {
   try {
     if (!exists(filePath)) return undefined;
@@ -71,10 +81,14 @@ function configuredModel() {
   return normalizeModel(cfg().get('modeloAtual') || readCurrentModelFromDevinConfig() || 'auto');
 }
 function modelForCli() {
-  const selected = normalizeModel(cfg().get('modeloAtual') || 'auto');
-  return selected === 'auto' ? undefined : selected;
+  return sanitizeModel(cfg().get('modeloAtual') || readCurrentModelFromDevinConfig() || 'auto');
 }
 function currentAgent() { return String(cfg().get('agenteAtual') || 'auto'); }
+function currentMode() { return String(cfg().get('modoExecucaoChat') || 'resposta-integrada'); }
+function selectedSkills() {
+  const list = cfg().get('skillsSelecionadas') || [];
+  return Array.isArray(list) ? list.map(String).filter(Boolean) : [];
+}
 function devinPath() { return String(cfg().get('caminhoDevin') || 'devin'); }
 function defaultCwd() { return workspaceRoot() || os.homedir(); }
 
@@ -100,240 +114,64 @@ function baseArgs() {
   if (modelFlag && selectedModel) out.push(modelFlag, selectedModel);
   return out;
 }
-function currentSkills() {
-  const value = cfg().get('skillsAtuais') || [];
-  if (Array.isArray(value)) return value.map(String).map(s => s.trim()).filter(Boolean);
-  if (typeof value === 'string' && value.trim()) return [value.trim()];
-  return [];
-}
-function fileSizeLabel(size) {
-  const n = Number(size || 0);
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 102.4) / 10} KB`;
-  return `${Math.round(n / 104857.6) / 10} MB`;
-}
-function safeRelative(filePath) {
-  try {
-    const root = workspaceRoot();
-    if (root && filePath && path.isAbsolute(filePath)) {
-      const rel = path.relative(root, filePath);
-      if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return rel.replace(/\\/g, '/');
-    }
-  } catch (_) {}
-  return filePath || '';
-}
-function frontMatterValue(markdown, key) {
-  const text = String(markdown || '');
-  const match = text.match(/^---\s*\n([\s\S]*?)\n---/);
-  if (!match) return '';
-  const re = new RegExp('^' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*["\']?([^"\'\n]+)', 'mi');
-  const found = match[1].match(re);
-  return found ? found[1].trim() : '';
-}
-function readTextLimited(filePath, maxBytes) {
-  try {
-    const stat = fs.statSync(filePath);
-    if (!stat.isFile()) return undefined;
-    const limit = Math.max(1024, Number(maxBytes || 65536));
-    const fd = fs.openSync(filePath, 'r');
-    try {
-      const size = Math.min(stat.size, limit);
-      const buffer = Buffer.alloc(size);
-      fs.readSync(fd, buffer, 0, size, 0);
-      const truncated = stat.size > limit;
-      const sample = buffer.slice(0, Math.min(buffer.length, 4096));
-      for (const byte of sample) { if (byte === 0) return { binary: true, size: stat.size, content: '', truncated }; }
-      return { binary: false, size: stat.size, content: buffer.toString('utf8'), truncated };
-    } finally {
-      fs.closeSync(fd);
-    }
-  } catch (_) {
-    return undefined;
-  }
-}
-function standardAgentDirs() {
-  const dirs = [
-    resolveMaybe(cfg().get('diretorioAgentesWorkspace') || '.devin/agents'),
-    resolveMaybe('.agents/agents'),
-    resolveMaybe('.claude/agents'),
-    resolveMaybe(cfg().get('diretorioAgentesGlobal') || (process.platform === 'win32' ? '%APPDATA%\\devin\\agents' : '~/.config/devin/agents'))
-  ];
-  if (process.platform === 'win32') {
-    const app = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-    dirs.push(path.join(app, 'devin', 'agents'));
-  }
-  return Array.from(new Set(dirs.filter(Boolean).map(expandEnvPath)));
-}
-function standardSkillDirs() {
-  const dirs = [
-    resolveMaybe(cfg().get('diretorioSkillsWorkspace') || '.devin/skills'),
-    resolveMaybe('.skills'),
-    resolveMaybe('.agents/skills'),
-    resolveMaybe('.claude/skills'),
-    resolveMaybe(cfg().get('diretorioSkillsGlobal') || (process.platform === 'win32' ? '%APPDATA%\\devin\\skills' : '~/.config/devin/skills'))
-  ];
-  if (process.platform === 'win32') {
-    const app = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-    dirs.push(path.join(app, 'devin', 'skills'));
-  }
-  return Array.from(new Set(dirs.filter(Boolean).map(expandEnvPath)));
-}
-function expandEnvPath(value) {
-  const s = expandHome(String(value || ''));
-  return s.replace(/%([^%]+)%/g, (_, name) => process.env[name] || `%${name}%`);
-}
-function collectMarkdownEntries(dirs, kind) {
-  const out = [];
-  const seen = new Set();
-  const maxEntries = 120;
-  function add(filePath, fallbackId, source) {
-    try {
-      if (!filePath || seen.has(filePath) || !fs.existsSync(filePath)) return;
-      const stat = fs.statSync(filePath);
-      if (!stat.isFile() || !filePath.toLowerCase().endsWith('.md')) return;
-      const preview = readTextLimited(filePath, 32768);
-      const content = preview && !preview.binary ? preview.content : '';
-      const base = path.basename(filePath, '.md');
-      const parent = path.basename(path.dirname(filePath));
-      let id = fallbackId || (base.toUpperCase() === 'AGENT' || base.toUpperCase() === 'SKILL' ? parent : base);
-      const fmName = frontMatterValue(content, 'name');
-      if (fmName) id = fmName;
-      id = String(id || base || parent).trim().replace(/\s+/g, '-');
-      if (!id || seen.has(kind + ':' + id)) return;
-      const description = frontMatterValue(content, 'description');
-      seen.add(filePath);
-      seen.add(kind + ':' + id);
-      out.push({ id, label: id, description, filePath, source, kind });
-    } catch (_) {}
-  }
-  function walk(dir, depth, source) {
-    if (out.length >= maxEntries || depth < 0) return;
-    let names;
-    try { names = fs.readdirSync(dir); } catch (_) { return; }
-    for (const name of names) {
-      if (out.length >= maxEntries) break;
-      if (name.startsWith('.') && name !== '.devin' && name !== '.claude') continue;
-      const full = path.join(dir, name);
-      let stat;
-      try { stat = fs.statSync(full); } catch (_) { continue; }
-      if (stat.isDirectory()) {
-        const agentFile = path.join(full, 'AGENT.md');
-        const skillFile = path.join(full, 'SKILL.md');
-        if (kind === 'agent' && fs.existsSync(agentFile)) add(agentFile, name, source);
-        else if (kind === 'skill' && fs.existsSync(skillFile)) add(skillFile, name, source);
-        else walk(full, depth - 1, source);
-      } else if (stat.isFile() && full.toLowerCase().endsWith('.md')) {
-        if (kind === 'agent' && name.toUpperCase() === 'SKILL.MD') continue;
-        if (kind === 'skill' && name.toUpperCase() === 'AGENT.MD') continue;
-        add(full, undefined, source);
-      }
-    }
-  }
-  for (const dir of dirs) {
-    try {
-      if (!dir || !fs.existsSync(dir)) continue;
-      walk(dir, 2, safeRelative(dir));
-    } catch (_) {}
-  }
-  return out.sort((a, b) => a.id.localeCompare(b.id));
-}
-function scanAgentEntries() { return collectMarkdownEntries(standardAgentDirs(), 'agent'); }
-function scanSkillEntries() { return collectMarkdownEntries(standardSkillDirs(), 'skill'); }
-function scanAgents() { return Array.from(new Set(['auto', ...scanAgentEntries().map(x => x.id)])); }
-function scanSkills() { return scanSkillEntries().map(x => x.id); }
-function selectedEntryIdsFromPrompt(text, entries, prefix) {
-  const prompt = String(text || '');
-  const ids = new Set();
-  for (const entry of entries) {
-    const escaped = entry.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = prefix === '@'
-      ? new RegExp('(^|[^\\w.-])@' + escaped + '(?=$|[^\\w.-])', 'i')
-      : new RegExp('(^|[^\\w.-])#' + escaped + '(?=$|[^\\w.-])', 'i');
-    if (pattern.test(prompt)) ids.add(entry.id);
-  }
-  return Array.from(ids);
-}
-function uniqueEntriesById(entries, ids) {
-  const byId = new Map(entries.map(e => [e.id, e]));
-  const out = [];
-  const seen = new Set();
-  for (const id of ids) {
-    const e = byId.get(id);
-    if (e && !seen.has(e.id)) { seen.add(e.id); out.push(e); }
-  }
-  return out;
-}
-function markdownEntriesBlock(title, entries) {
-  if (!entries || !entries.length || cfg().get('incluirConteudoAgenteSkillNoPrompt', true) === false) return '';
-  const max = Number(cfg().get('limiteBytesArquivoMd') || 65536);
-  const blocks = [];
-  for (const entry of entries) {
-    const data = readTextLimited(entry.filePath, max);
-    if (!data || data.binary) continue;
-    blocks.push([
-      `### ${entry.kind === 'agent' ? 'Agente' : 'Skill'}: ${entry.id}`,
-      `Arquivo: ${safeRelative(entry.filePath)}`,
-      data.truncated ? `Observacao: conteudo truncado em ${fileSizeLabel(max)}.` : '',
-      '```md',
-      data.content,
-      '```'
-    ].filter(Boolean).join('\n'));
-  }
-  return blocks.length ? [`## ${title}`, ...blocks].join('\n\n') : '';
-}
-function attachmentsBlock(attachments) {
-  const list = Array.isArray(attachments) ? attachments : [];
-  if (!list.length) return '';
-  const blocks = list.map(file => [
-    `### Arquivo anexado: ${file.relativePath || file.name}`,
-    `Caminho: ${file.fsPath}`,
-    `Tamanho: ${fileSizeLabel(file.size)}${file.truncated ? ' (conteudo truncado)' : ''}`,
-    file.binary ? 'Conteudo: arquivo binario ou nao textual; use apenas o caminho acima.' : ['```', file.content || '', '```'].join('\n')
-  ].join('\n'));
-  return ['## Arquivos anexados', ...blocks].join('\n\n');
-}
-function fullPrompt(text, extra) {
+function fullPrompt(text) {
   const prefix = cfg().get('prefixoPromptPadrao') || '';
   const selectedModel = modelForCli() || configuredModel() || 'auto';
   const selectedAgent = currentAgent();
-  const selectedSkills = currentSkills();
+  const skills = selectedSkills();
   const context = [
     `Workspace VS Code: ${workspaceName()}`,
     workspaceRoot() ? `Diretorio raiz: ${workspaceRoot()}` : 'Diretorio raiz: nao ha pasta aberta',
     `Modelo selecionado: ${selectedModel}`,
     `Agente selecionado: ${selectedAgent}`,
-    `Skills selecionadas: ${selectedSkills.length ? selectedSkills.join(', ') : 'nenhuma'}`
-  ].join('\n');
-  const agentEntries = scanAgentEntries();
-  const skillEntries = scanSkillEntries();
-  const agentIds = [selectedAgent !== 'auto' ? selectedAgent : '', ...selectedEntryIdsFromPrompt(text, agentEntries, '@')].filter(Boolean);
-  const skillIds = [...selectedSkills, ...selectedEntryIdsFromPrompt(text, skillEntries, '#')].filter(Boolean);
-  const loadedAgents = uniqueEntriesById(agentEntries, agentIds);
-  const loadedSkills = uniqueEntriesById(skillEntries, skillIds);
-  const agentHint = loadedAgents.length
-    ? `Aplique as instrucoes dos AGENT.md carregados abaixo. Quando o prompt mencionar @nome, trate como chamada explicita daquele agente.`
-    : (selectedAgent !== 'auto' ? `Use o perfil/subagente Devin chamado "${selectedAgent}" quando aplicavel.` : '');
-  const skillHint = loadedSkills.length
-    ? 'Aplique as skills Markdown carregadas abaixo como playbooks operacionais para esta resposta.'
+    skills.length ? `Skills disponiveis: ${skills.join(', ')}` : ''
+  ].filter(Boolean).join('\n');
+  const agentHint = selectedAgent !== 'auto'
+    ? `Use o perfil/subagente Devin chamado "${selectedAgent}" quando aplicavel. Se a CLI nao aceitar selecao direta de agente nesta chamada, trate este agente como persona operacional e siga as instrucoes do respectivo AGENT.md.`
     : '';
-  return [
-    prefix,
-    context,
-    agentHint,
-    skillHint,
-    markdownEntriesBlock('Agentes carregados', loadedAgents),
-    markdownEntriesBlock('Skills carregadas', loadedSkills),
-    attachmentsBlock(extra && extra.attachments),
-    text
-  ].filter(Boolean).join('\n\n');
+  const skillsHint = skills.length
+    ? `Invoque a skill via tool 'skill' quando aplicavel: ${skills.map(s => `"${s}"`).join(', ')}. Siga as instrucoes do respectivo SKILL.md.`
+    : '';
+  return [prefix, context, agentHint, skillsHint, text].filter(Boolean).join('\n\n');
 }
-function terminalCommand(text, extra) {
+function terminalCommand(text) {
   const executable = shellQuote(devinPath());
   const args = baseArgs().map(shellQuote).join(' ');
   if (!text) return [executable, args].filter(Boolean).join(' ');
-  return [executable, args, '--', shellQuote(fullPrompt(text, extra))].filter(Boolean).join(' ');
+  return [executable, args, '--', shellQuote(fullPrompt(text))].filter(Boolean).join(' ');
 }
-function openTerminal(text, extra) {
+function cleanStderr(stderr) {
+  if (!stderr) return '';
+  return String(stderr)
+    .split(/\r?\n/)
+    .filter(line => !/were not migrated because they already exist/i.test(line))
+    .filter(line => !/migration.*already exist/i.test(line))
+    .join('\n')
+    .trim();
+}
+function friendlyCliOutput(stdout, stderr, err) {
+  const cleanErr = cleanStderr(stderr);
+  const combined = [stdout || '', cleanErr || '', err && err.message ? err.message : ''].join('\n');
+  if (/No active model set in cog manager/i.test(combined)) {
+    return [
+      'Modelo Devin nao configurado para esta execucao.',
+      '',
+      'A extensao tentou enviar o alias selecionado, mas o Devin CLI informou que nao ha modelo ativo no cog manager.',
+      '',
+      'Acoes recomendadas:',
+      `1. Execute no terminal: devin model set ${configuredModel() || 'auto'}`,
+      '2. Se houver conflito de migracao de config, mantenha apenas o valor desejado em agent.model no config.json do Devin.',
+      '3. No chat, reabra o seletor de modelo e escolha um dos aliases validos: auto, sonnet, opus, swe, gpt.'
+    ].join('\n');
+  }
+  const parts = [];
+  if (stdout && stdout.trim()) parts.push(stdout.trim());
+  if (cleanErr) parts.push(`STDERR:\n${cleanErr}`);
+  if (err) parts.push(`Falha ao executar Devin CLI: ${err.message}`);
+  return parts.join('\n\n') || 'Sem saida do Devin CLI.';
+}
+
+function openTerminal(text) {
   const shellPath = terminalShell();
   const terminal = vscode.window.createTerminal({
     name: cfg().get('nomeTerminal') || 'Devin Cli Chat',
@@ -342,11 +180,11 @@ function openTerminal(text, extra) {
     shellArgs: process.platform === 'win32' && shellPath ? ['--login', '-i'] : undefined
   });
   terminal.show(true);
-  terminal.sendText(terminalCommand(text, extra));
+  terminal.sendText(terminalCommand(text));
 }
-function runIntegrated(text, extra) {
+function runIntegrated(text) {
   return new Promise((resolve) => {
-    const args = [...baseArgs(), '-p', '--', fullPrompt(text, extra)];
+    const args = [...baseArgs(), '-p', '--', fullPrompt(text)];
     let settled = false;
     function done(value) {
       if (settled) return;
@@ -362,26 +200,22 @@ function runIntegrated(text, extra) {
         windowsHide: true
       }, (err, stdout, stderr) => {
         if (err && process.platform === 'win32') {
-          runIntegratedViaBash(text, err, extra).then(done);
+          runIntegratedViaBash(text, err).then(done);
           return;
         }
-        const parts = [];
-        if (stdout && stdout.trim()) parts.push(stdout.trim());
-        if (stderr && stderr.trim()) parts.push(`STDERR:\n${stderr.trim()}`);
-        if (err) parts.push(`Falha ao executar Devin CLI: ${err.message}`);
-        done(parts.join('\n\n') || 'Sem saida do Devin CLI.');
+        done(friendlyCliOutput(stdout, stderr, err));
       });
       child.on('error', (err) => {
-        if (process.platform === 'win32') runIntegratedViaBash(text, err, extra).then(done);
+        if (process.platform === 'win32') runIntegratedViaBash(text, err).then(done);
         else done(`Falha ao iniciar Devin CLI: ${err.message}\n\nValide o caminho em devinCliChat.caminhoDevin e execute "Devin Cli Chat: Verificar Devin CLI".`);
       });
     } catch (err) {
-      if (process.platform === 'win32') runIntegratedViaBash(text, err, extra).then(done);
+      if (process.platform === 'win32') runIntegratedViaBash(text, err).then(done);
       else done(`Falha ao iniciar Devin CLI: ${err.message}\n\nValide o caminho em devinCliChat.caminhoDevin e execute "Devin Cli Chat: Verificar Devin CLI".`);
     }
   });
 }
-function runIntegratedViaBash(text, firstError, extra) {
+function runIntegratedViaBash(text, firstError) {
   return new Promise((resolve) => {
     const bash = findGitBash();
     if (!bash) {
@@ -389,18 +223,15 @@ function runIntegratedViaBash(text, firstError, extra) {
       return;
     }
     const args = baseArgs().map(shellQuote).join(' ');
-    const command = `${shellQuote(devinPath())} ${args} -p -- ${shellQuote(fullPrompt(text, extra))}`;
+    const command = `${shellQuote(devinPath())} ${args} -p -- ${shellQuote(fullPrompt(text))}`;
     cp.exec(command, {
       cwd: defaultCwd(),
       shell: bash,
       timeout: Number(cfg().get('timeoutChatMs') || 300000),
       maxBuffer: 1024 * 1024 * 16
     }, (err, stdout, stderr) => {
-      const parts = [];
-      if (stdout && stdout.trim()) parts.push(stdout.trim());
-      if (stderr && stderr.trim()) parts.push(`STDERR:\n${stderr.trim()}`);
-      if (err) parts.push(`Falha ao executar Devin CLI via Git Bash: ${err.message}`);
-      resolve(parts.join('\n\n') || 'Sem saida do Devin CLI.');
+      const output = friendlyCliOutput(stdout, stderr, err);
+      resolve(output.replace('Falha ao executar Devin CLI:', 'Falha ao executar Devin CLI via Git Bash:'));
     });
   });
 }
@@ -428,14 +259,9 @@ function cacheModelFiles() {
   return Array.from(new Set(files));
 }
 function looksLikeModel(value) {
-  const s = String(value || '').trim();
-  if (s.length < 2 || s.length > 80) return false;
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(s)) return false;
-  if (/^(true|false|null|undefined|model|models|name|display|enabled|disabled|token|config|settings)$/i.test(s)) return false;
-  if (s === 'auto') return true;
-  if (/(claude|sonnet|opus|haiku|gpt|codex|gemini|swe|kimi|glm|adaptive|thinking|flash|pro|mini|low|medium|high|fast)/i.test(s)) return true;
-  return /\d/.test(s) && s.includes('-');
+  return VALID_MODELS.includes(String(value || '').trim().toLowerCase());
 }
+
 function readModelsFromCaches() {
   const limit = Number(cfg().get('limiteBytesCacheModelos') || 5242880);
   const out = [];
@@ -454,12 +280,34 @@ function readModelsFromCaches() {
   }
   return Array.from(new Set(out));
 }
+function discoverModelsFromCli() {
+  return new Promise((resolve) => {
+    const customCmd = String(cfg().get('comandoDescobertaModelos') || '').trim();
+    if (!customCmd) { resolve([]); return; }
+    try {
+      cp.execFile(devinPath(), customCmd.split(/\s+/), {
+        cwd: defaultCwd(),
+        timeout: Number(cfg().get('timeoutDescobertaModelosMs') || 2500),
+        windowsHide: true
+      }, (err, stdout) => {
+        if (err || !stdout) { resolve([]); return; }
+        try {
+          const parsed = JSON.parse(stdout);
+          const list = Array.isArray(parsed) ? parsed : (parsed && parsed.models) || [];
+          resolve(list.map(m => typeof m === 'string' ? m : (m && (m.name || m.id))).filter(Boolean));
+          return;
+        } catch (_) {}
+        const matches = stdout.match(/[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}/g) || [];
+        resolve(matches.filter(looksLikeModel));
+      });
+    } catch (_) { resolve([]); }
+  });
+}
 function modelsForUi() {
-  const current = configuredModel();
-  const values = ['auto', current, readCurrentModelFromDevinConfig(), ...manualModels(), ...readModelsFromCaches()]
-    .map(normalizeModel)
+  const values = [configuredModel(), readCurrentModelFromDevinConfig(), ...manualModels(), ...readModelsFromCaches(), ...validModelsForUi()]
+    .map(sanitizeModel)
     .filter(Boolean);
-  return Array.from(new Set(values));
+  return Array.from(new Set([...validModelsForUi(), ...values]));
 }
 function scanAgents() {
   const dirs = [
@@ -478,12 +326,57 @@ function scanAgents() {
   }
   return Array.from(new Set(out));
 }
+function scanSkills() {
+  const dirs = [
+    resolveMaybe(cfg().get('diretorioSkillsWorkspace') || '.cognition/skills'),
+    resolveMaybe(cfg().get('diretorioSkillsGlobal') || '~/.config/cognition/skills'),
+    resolveMaybe('.claude/skills'),
+    resolveMaybe('~/.claude/skills')
+  ];
+  const out = [];
+  for (const dir of dirs) {
+    try {
+      if (!dir || !fs.existsSync(dir)) continue;
+      for (const name of fs.readdirSync(dir)) {
+        const skillFile = path.join(dir, name, 'SKILL.md');
+        if (fs.existsSync(skillFile)) out.push(name);
+      }
+    } catch (_) {}
+  }
+  return Array.from(new Set(out)).sort();
+}
 function activeContext() {
   const editor = vscode.window.activeTextEditor;
   if (!editor) return 'Nenhum editor ativo.';
   const doc = editor.document;
   const text = editor.selection && !editor.selection.isEmpty ? doc.getText(editor.selection) : doc.getText();
   return [`Arquivo: ${doc.uri.fsPath}`, 'Conteudo:', '```', text.slice(0, 60000), '```'].join('\n');
+}
+function estimateTokens(text) {
+  if (!text) return 0;
+  return Math.max(1, Math.ceil(String(text).length / 4));
+}
+function buildSelectionPayload(editor) {
+  if (!editor || !editor.selection || editor.selection.isEmpty) return null;
+  const doc = editor.document;
+  const sel = editor.selection;
+  const text = doc.getText(sel);
+  if (!text || !text.trim()) return null;
+  const file = doc.uri.fsPath;
+  const base = path.basename(file);
+  const startLine = sel.start.line + 1;
+  const endLine = sel.end.line + 1;
+  return {
+    id: 'sel-' + Date.now().toString(36),
+    file,
+    base,
+    language: doc.languageId,
+    startLine,
+    endLine,
+    text,
+    preview: text.split('\n').slice(0, 2).join(' ').slice(0, 80),
+    label: `${base}:${startLine}-${endLine}`
+  };
 }
 function gitDiff() {
   try {
@@ -504,15 +397,20 @@ function updateStatusBar() {
     statusBar.show();
   }
   statusBar.text = `Devin: ${configuredModel()} / ${currentAgent()}`;
-  statusBar.tooltip = `Workspace: ${workspaceName()}`;
+  statusBar.tooltip = `Workspace: ${workspaceName()} | Modo: ${currentMode()} | Skills: ${selectedSkills().length}`;
 }
 async function pickManualModel() {
   const value = await vscode.window.showInputBox({
     title: 'Modelo Devin',
-    prompt: 'Informe exatamente o nome do modelo aceito pelo Devin CLI.',
+    prompt: 'Aliases aceitos pelo Devin CLI nesta build: auto, sonnet, opus, swe, gpt.',
     value: configuredModel() === 'auto' ? '' : configuredModel()
   });
-  if (value && value.trim()) await setConfig('modeloAtual', value.trim());
+  if (!value || !value.trim()) return;
+  const sanitized = sanitizeModel(value);
+  if (sanitized !== String(value).trim().toLowerCase()) {
+    vscode.window.showInformationMessage(`Modelo "${value.trim()}" nao e aceito por esta versao do Devin CLI. Usando "${sanitized}".`);
+  }
+  await setConfig('modeloAtual', sanitized);
 }
 async function pickModel() {
   const pick = await vscode.window.showQuickPick([...modelsForUi(), '+ Informar modelo manual'], {
@@ -522,26 +420,27 @@ async function pickModel() {
   if (pick.startsWith('+')) return pickManualModel();
   await setConfig('modeloAtual', pick);
 }
-
 async function pickSkills() {
-  const entries = scanSkillEntries();
-  if (!entries.length) {
-    vscode.window.showInformationMessage('Nenhuma skill Markdown encontrada. Use .devin/skills, .skills ou configure devinCliChat.diretorioSkillsWorkspace.');
+  const available = scanSkills();
+  if (!available.length) {
+    vscode.window.showInformationMessage('Nenhuma skill encontrada em .cognition/skills ou ~/.config/cognition/skills.');
     return;
   }
-  const selected = new Set(currentSkills());
-  const items = entries.map(entry => ({
-    label: entry.id,
-    description: safeRelative(entry.filePath),
-    detail: entry.description || 'Skill Markdown',
-    picked: selected.has(entry.id)
-  }));
-  const picks = await vscode.window.showQuickPick(items, {
+  const current = new Set(selectedSkills());
+  const items = available.map(s => ({ label: s, picked: current.has(s) }));
+  const picked = await vscode.window.showQuickPick(items, {
     canPickMany: true,
-    placeHolder: 'Selecione uma ou mais skills Markdown para aplicar no prompt'
+    placeHolder: 'Selecione skills disponiveis para o Devin'
   });
-  if (!picks) return;
-  await setConfig('skillsAtuais', picks.map(item => item.label));
+  if (!picked) return;
+  await setConfig('skillsSelecionadas', picked.map(p => p.label));
+}
+
+function loadHistory() {
+  try { return extContext && extContext.globalState.get(HISTORY_KEY) || []; } catch (_) { return []; }
+}
+async function saveHistory(sessions) {
+  try { if (extContext) await extContext.globalState.update(HISTORY_KEY, sessions.slice(0, MAX_HISTORY)); } catch (_) {}
 }
 
 class ChatViewProvider {
@@ -549,59 +448,37 @@ class ChatViewProvider {
     this.context = context;
     this.view = undefined;
     this.busy = false;
-    this.attachments = [];
+    this.session = this.newSession();
   }
 
-  attachmentSummaries() {
-    return this.attachments.map(file => ({ id: file.id, name: file.name, relativePath: file.relativePath, size: file.size, truncated: !!file.truncated, binary: !!file.binary }));
+  newSession() {
+    return {
+      id: 'sess-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+      title: 'Nova conversa',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      workspace: workspaceName(),
+      model: configuredModel(),
+      agent: currentAgent(),
+      mode: currentMode(),
+      skills: selectedSkills(),
+      messages: []
+    };
   }
 
-  async attachFiles() {
-    const root = workspaceRoot();
-    const uris = await vscode.window.showOpenDialog({
-      canSelectFiles: true,
-      canSelectFolders: false,
-      canSelectMany: true,
-      defaultUri: root ? vscode.Uri.file(root) : undefined,
-      title: 'Anexar arquivos ao Devin Cli Chat'
-    });
-    if (!uris || !uris.length) return;
-    const maxFiles = Math.max(1, Number(cfg().get('maximoAnexos') || 10));
-    const maxBytes = Math.max(1024, Number(cfg().get('limiteBytesAnexo') || 524288));
-    const current = new Map(this.attachments.map(file => [file.fsPath, file]));
-    for (const uri of uris) {
-      if (this.attachments.length >= maxFiles) break;
-      if (!uri || uri.scheme && uri.scheme !== 'file') continue;
-      const fsPath = uri.fsPath;
-      if (current.has(fsPath)) continue;
-      const data = readTextLimited(fsPath, maxBytes);
-      if (!data) continue;
-      const statSize = data.size || 0;
-      const item = {
-        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-        fsPath,
-        name: path.basename(fsPath),
-        relativePath: safeRelative(fsPath),
-        size: statSize,
-        content: data.content || '',
-        truncated: !!data.truncated,
-        binary: !!data.binary
-      };
-      this.attachments.push(item);
-      current.set(fsPath, item);
+  async persistSession() {
+    if (!this.session || !this.session.messages.length) return;
+    const all = loadHistory();
+    const idx = all.findIndex(s => s.id === this.session.id);
+    this.session.updatedAt = Date.now();
+    if (!this.session.title || this.session.title === 'Nova conversa') {
+      const first = this.session.messages.find(m => m.role === 'user');
+      if (first) this.session.title = String(first.text).slice(0, 60).replace(/\s+/g, ' ').trim();
     }
-    this.refreshMeta();
-    this.post({ type: 'action', ok: true, text: `${this.attachments.length} anexo(s) carregado(s).` });
-  }
-
-  removeAttachment(id) {
-    this.attachments = this.attachments.filter(file => file.id !== id);
-    this.refreshMeta();
-  }
-
-  clearAttachments() {
-    this.attachments = [];
-    this.refreshMeta();
+    if (idx >= 0) all[idx] = this.session;
+    else all.unshift(this.session);
+    all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    await saveHistory(all);
   }
 
   resolveWebviewView(view) {
@@ -612,56 +489,43 @@ class ChatViewProvider {
     view.webview.onDidReceiveMessage(async (message) => {
       try {
         const type = message && message.type;
-        if (type === 'ready') {
-          this.refreshMeta();
-          return;
-        }
-        if (type === 'send') {
-          await this.send(message.text || '', { echoUser: message.echo !== false });
-          return;
-        }
+        if (type === 'ready') { this.refreshMeta(); this.replaySession(); this.pushCurrentSelection(); return; }
+        if (type === 'requestSelection') { this.pushCurrentSelection(true); return; }
+        if (type === 'attachMenu') { await this.chooseAttachSource(); return; }
+        if (type === 'attachFiles') { await this.attachFiles(); return; }
+        if (type === 'pickWorkspaceFiles') { await this.pickWorkspaceFiles(); return; }
+        if (type === 'listWorkspace') { this.listWorkspaceDir(message.path || ''); return; }
+        if (type === 'attachFolder') { await this.attachFolder(message.path || ''); return; }
+        if (type === 'attachWorkspacePath') { await this.attachWorkspacePath(message.path || ''); return; }
+        if (type === 'send') { await this.send(message.text || '', { echoUser: message.echo !== false, displayText: message.displayText || message.text || '' }); return; }
         if (type === 'terminal') {
-          openTerminal(message.text || '', { attachments: this.attachments });
+          openTerminal(message.text || '');
           this.post({ type: 'action', ok: true, text: 'Terminal aberto.' });
           return;
         }
-        if (type === 'newChat') {
-          this.clearAttachments();
-          this.post({ type: 'action', ok: true, text: 'Nova conversa iniciada.' });
-          return;
-        }
-        if (type === 'attachFiles') {
-          await this.attachFiles();
-          return;
-        }
-        if (type === 'removeAttachment') {
-          this.removeAttachment(message.id || '');
-          return;
-        }
-        if (type === 'clearAttachments') {
-          this.clearAttachments();
-          this.post({ type: 'action', ok: true, text: 'Anexos removidos.' });
-          return;
-        }
-        if (type === 'selectSkills') {
-          await pickSkills();
-          return;
-        }
         if (type === 'setModel') {
-          await setConfig('modeloAtual', message.value || 'auto');
+          await setConfig('modeloAtual', sanitizeModel(message.value || 'auto'));
           return;
         }
-        if (type === 'manualModel') {
-          await pickManualModel();
+        if (type === 'setMode') { await setConfig('modoExecucaoChat', message.value || 'resposta-integrada'); return; }
+        if (type === 'setAgent') { await setConfig('agenteAtual', message.value || 'auto'); return; }
+        if (type === 'toggleSkill') {
+          const set = new Set(selectedSkills());
+          if (message.value && set.has(message.value)) set.delete(message.value);
+          else if (message.value) set.add(message.value);
+          await setConfig('skillsSelecionadas', Array.from(set));
           return;
         }
+        if (type === 'manualModel') { await pickManualModel(); return; }
         if (type === 'refreshModels') {
           this.refreshMeta();
-          this.post({ type: 'action', ok: true, text: 'Modelos atualizados a partir dos arquivos locais.' });
-          return;
-        }
-        if (type === 'setAgent') {
-          await setConfig('agenteAtual', message.value || 'auto');
+          const extra = await discoverModelsFromCli();
+          if (extra.length) {
+            const merged = Array.from(new Set([...(cfg().get('modelosDisponiveis') || []), ...extra]));
+            await cfg().update('modelosDisponiveis', merged, vscode.ConfigurationTarget.Workspace);
+          }
+          this.refreshMeta();
+          this.post({ type: 'action', ok: true, text: 'Modelos atualizados (' + modelsForUi().length + ' disponiveis).' });
           return;
         }
         if (type === 'review') {
@@ -672,8 +536,31 @@ class ChatViewProvider {
           await this.send('Analise o contexto do editor atual.\n\n' + activeContext(), { echoUser: true });
           return;
         }
-        if (type === 'insertSelection') {
-          this.post({ type: 'insertPrompt', text: 'Analise o contexto do editor atual.\n\n' + activeContext() });
+        if (type === 'insertSelection') { this.post({ type: 'insertPrompt', text: 'Analise o contexto do editor atual.\n\n' + activeContext() }); return; }
+        if (type === 'newChat') { await this.persistSession(); this.session = this.newSession(); this.post({ type: 'clearThread' }); this.refreshMeta(); return; }
+        if (type === 'getHistory') { this.post({ type: 'history', sessions: loadHistory() }); return; }
+        if (type === 'loadSession') {
+          await this.persistSession();
+          const all = loadHistory();
+          const found = all.find(s => s.id === message.id);
+          if (found) {
+            this.session = JSON.parse(JSON.stringify(found));
+            this.post({ type: 'clearThread' });
+            this.replaySession();
+            this.refreshMeta();
+            this.post({ type: 'action', ok: true, text: 'Sessao carregada: ' + (found.title || found.id) });
+          }
+          return;
+        }
+        if (type === 'deleteSession') {
+          const all = loadHistory().filter(s => s.id !== message.id);
+          await saveHistory(all);
+          this.post({ type: 'history', sessions: all });
+          return;
+        }
+        if (type === 'clearHistory') {
+          await saveHistory([]);
+          this.post({ type: 'history', sessions: [] });
           return;
         }
         this.post({ type: 'action', ok: false, text: `Acao desconhecida: ${type}` });
@@ -687,10 +574,252 @@ class ChatViewProvider {
     setTimeout(() => this.refreshMeta(), 50);
   }
 
-  post(message) {
+  post(message) { try { if (this.view) this.view.webview.postMessage(message); } catch (_) {} }
+
+  pushCurrentSelection(force) {
+    const editor = vscode.window.activeTextEditor;
+    const payload = buildSelectionPayload(editor);
+    if (payload) this.post({ type: 'selectionAvailable', selection: payload });
+  }
+
+  attachmentId(prefix) {
+    return prefix + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+
+  readFileItem(filePath, label) {
+    const stat = fs.statSync(filePath);
+    if (stat.size > MAX_ATTACHMENT_BYTES) {
+      return { skipped: true, reason: `Arquivo muito grande: ${path.basename(filePath)} (${stat.size} bytes).` };
+    }
+    const text = fs.readFileSync(filePath, 'utf8');
+    const ext = path.extname(filePath).slice(1);
+    return {
+      id: this.attachmentId('file'),
+      file: filePath,
+      base: path.basename(filePath),
+      label: label || path.basename(filePath),
+      type: 'file',
+      text,
+      language: ext,
+      lines: text.split('\n').length
+    };
+  }
+
+  readFolderItem(folderPath, displayName) {
+    const root = workspaceRoot();
+    const folderName = displayName || path.basename(folderPath) || 'workspace';
+    const files = [];
+    const stack = [folderPath];
+    while (stack.length && files.length < MAX_FOLDER_FILES) {
+      const cur = stack.pop();
+      let entries;
+      try { entries = fs.readdirSync(cur, { withFileTypes: true }); } catch (_) { continue; }
+      for (const e of entries) {
+        const full = path.join(cur, e.name);
+        if (e.isDirectory()) {
+          if (!ATTACH_SKIP_DIRS.has(e.name) && !e.name.startsWith('.')) stack.push(full);
+        } else if (e.isFile()) {
+          try {
+            const st = fs.statSync(full);
+            if (st.size > MAX_ATTACHMENT_BYTES) continue;
+            const text = fs.readFileSync(full, 'utf8');
+            const rel = root && full.startsWith(root) ? path.relative(root, full) : path.join(folderName, path.relative(folderPath, full));
+            files.push({
+              file: full,
+              rel: rel.replace(/\\/g, '/'),
+              base: path.basename(full),
+              text,
+              language: path.extname(full).slice(1),
+              lines: text.split('\n').length
+            });
+            if (files.length >= MAX_FOLDER_FILES) break;
+          } catch (_) {}
+        }
+      }
+    }
+    return {
+      id: this.attachmentId('folder'),
+      file: folderPath,
+      base: folderName,
+      label: `${folderName} (${files.length})`,
+      type: 'folder',
+      files,
+      count: files.length,
+      truncated: files.length >= MAX_FOLDER_FILES
+    };
+  }
+
+  async chooseAttachSource() {
+    const pick = await vscode.window.showQuickPick([
+      { label: '$(folder) Pastas', description: 'Anexar pasta recursivamente como chip unico', value: 'folders' },
+      { label: '$(file) Arquivos abertos', description: 'Anexar arquivos atualmente abertos no editor', value: 'openFiles' }
+    ], { placeHolder: 'Anexar contexto ao Devin' });
+    if (!pick) return;
+    if (pick.value === 'folders') {
+      const uris = await vscode.window.showOpenDialog({
+        canSelectMany: true,
+        canSelectFiles: false,
+        canSelectFolders: true,
+        defaultUri: workspaceRoot() ? vscode.Uri.file(workspaceRoot()) : undefined,
+        openLabel: 'Anexar pasta'
+      });
+      if (!uris || !uris.length) return;
+      const items = [];
+      for (const uri of uris) {
+        try {
+          const item = this.readFolderItem(uri.fsPath, path.basename(uri.fsPath));
+          if (item.files && item.files.length) items.push(item);
+        } catch (err) {
+          this.post({ type: 'action', ok: false, text: `Falha ao anexar pasta ${uri.fsPath}: ${err.message}` });
+        }
+      }
+      if (items.length) this.post({ type: 'attachItems', items });
+      this.post({ type: 'action', ok: true, text: `Anexadas ${items.length} pasta(s).` });
+      return;
+    }
+    const docs = vscode.workspace.textDocuments.filter(d => d.uri && d.uri.scheme === 'file' && !d.isUntitled);
+    if (!docs.length) { this.post({ type: 'action', ok: false, text: 'Nenhum arquivo aberto para anexar.' }); return; }
+    const root = workspaceRoot() || '';
+    const choices = docs.map(doc => ({
+      label: '$(file) ' + path.basename(doc.uri.fsPath),
+      description: root ? path.dirname(path.relative(root, doc.uri.fsPath)) : path.dirname(doc.uri.fsPath),
+      detail: doc.uri.fsPath,
+      doc
+    }));
+    const picked = await vscode.window.showQuickPick(choices, { canPickMany: true, placeHolder: 'Selecione arquivos abertos para anexar' });
+    if (!picked || !picked.length) return;
+    const items = [];
+    for (const p of picked) {
+      const doc = p.doc;
+      const text = doc.getText();
+      if (Buffer.byteLength(text, 'utf8') > MAX_ATTACHMENT_BYTES) {
+        this.post({ type: 'action', ok: false, text: `Arquivo muito grande: ${path.basename(doc.uri.fsPath)}.` });
+        continue;
+      }
+      items.push({
+        id: this.attachmentId('file'),
+        file: doc.uri.fsPath,
+        base: path.basename(doc.uri.fsPath),
+        label: path.basename(doc.uri.fsPath),
+        type: 'file',
+        text,
+        language: doc.languageId || path.extname(doc.uri.fsPath).slice(1),
+        lines: text.split('\n').length
+      });
+    }
+    if (items.length) this.post({ type: 'attachItems', items });
+  }
+
+  async attachFiles() {
     try {
-      if (this.view) this.view.webview.postMessage(message);
-    } catch (_) {}
+      const uris = await vscode.window.showOpenDialog({
+        canSelectMany: true,
+        canSelectFiles: true,
+        canSelectFolders: false,
+        defaultUri: workspaceRoot() ? vscode.Uri.file(workspaceRoot()) : undefined,
+        openLabel: 'Anexar ao chat'
+      });
+      if (!uris || !uris.length) return;
+      const items = [];
+      for (const uri of uris) {
+        try {
+          const stat = fs.statSync(uri.fsPath);
+          if (stat.size > 1024 * 1024) {
+            items.push({ id: 'file-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5), file: uri.fsPath, base: path.basename(uri.fsPath), label: path.basename(uri.fsPath), type: 'file', text: `Arquivo ${uri.fsPath} muito grande (${stat.size} bytes) - nao anexado.`, language: '', tooBig: true });
+            continue;
+          }
+          const text = fs.readFileSync(uri.fsPath, 'utf8');
+          const ext = path.extname(uri.fsPath).slice(1);
+          items.push({ id: 'file-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5), file: uri.fsPath, base: path.basename(uri.fsPath), label: path.basename(uri.fsPath), type: 'file', text, language: ext, lines: text.split('\n').length });
+        } catch (err) {
+          this.post({ type: 'action', ok: false, text: `Falha ao ler ${uri.fsPath}: ${err.message}` });
+        }
+      }
+      if (items.length) this.post({ type: 'attachItems', items });
+    } catch (err) {
+      this.post({ type: 'action', ok: false, text: 'Falha ao anexar: ' + (err && err.message ? err.message : String(err)) });
+    }
+  }
+
+  async pickWorkspaceFiles() {
+    try {
+      const found = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,dist,build,out,.venv,__pycache__}/**', 5000);
+      if (!found.length) { this.post({ type: 'action', ok: false, text: 'Nenhum arquivo encontrado.' }); return; }
+      const root = workspaceRoot() || '';
+      const items = found.map(uri => ({ label: path.relative(root, uri.fsPath) || path.basename(uri.fsPath), description: '', uri }));
+      const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Selecione arquivos do workspace para anexar', canPickMany: true, matchOnDescription: true });
+      if (!pick || !pick.length) return;
+      const out = [];
+      for (const p of pick) {
+        try {
+          const stat = fs.statSync(p.uri.fsPath);
+          if (stat.size > 1024 * 1024) continue;
+          const text = fs.readFileSync(p.uri.fsPath, 'utf8');
+          const ext = path.extname(p.uri.fsPath).slice(1);
+          out.push({ id: 'file-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5), file: p.uri.fsPath, base: path.basename(p.uri.fsPath), label: path.basename(p.uri.fsPath), type: 'file', text, language: ext });
+        } catch (_) {}
+      }
+      if (out.length) this.post({ type: 'attachItems', items: out });
+    } catch (err) {
+      this.post({ type: 'action', ok: false, text: 'Falha: ' + (err && err.message ? err.message : String(err)) });
+    }
+  }
+
+  listWorkspaceDir(relPath) {
+    try {
+      const root = workspaceRoot();
+      if (!root) { this.post({ type: 'workspaceList', path: relPath || '', entries: [], error: 'Sem workspace aberto.' }); return; }
+    const safe = String(relPath || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\.\.\/?/g, '');
+      const dir = safe ? path.join(root, safe) : root;
+      if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) { this.post({ type: 'workspaceList', path: '', entries: [], error: 'Diretorio invalido.' }); return; }
+      const skip = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.venv', '__pycache__', '.next', '.nuxt', '.cache', 'target', '.idea']);
+      const list = fs.readdirSync(dir, { withFileTypes: true })
+        .filter(e => !e.name.startsWith('.') || ['.cognition', '.devin', '.claude', '.cursor', '.vscode'].includes(e.name))
+        .filter(e => !(e.isDirectory() && skip.has(e.name)))
+        .map(e => {
+          let size = 0;
+          try { if (e.isFile()) size = fs.statSync(path.join(dir, e.name)).size; } catch (_) {}
+          return { name: e.name, isDir: e.isDirectory(), size };
+        })
+        .sort((a, b) => (b.isDir - a.isDir) || a.name.localeCompare(b.name));
+      this.post({ type: 'workspaceList', path: safe, entries: list });
+    } catch (err) {
+      this.post({ type: 'workspaceList', path: '', entries: [], error: err.message });
+    }
+  }
+
+  async attachWorkspacePath(relPath) {
+    const root = workspaceRoot();
+    if (!root) return;
+    const abs = path.join(root, String(relPath || '').replace(/\\/g, '/').replace(/^\/+/, ''));
+    if (!fs.existsSync(abs)) { this.post({ type: 'action', ok: false, text: 'Caminho invalido.' }); return; }
+    if (fs.statSync(abs).isDirectory()) { await this.attachFolder(relPath); return; }
+    try {
+      const stat = fs.statSync(abs);
+      if (stat.size > 1024 * 1024) { this.post({ type: 'action', ok: false, text: `Arquivo muito grande: ${path.basename(abs)} (${stat.size} bytes).` }); return; }
+      const text = fs.readFileSync(abs, 'utf8');
+      const ext = path.extname(abs).slice(1);
+      this.post({ type: 'attachItems', items: [{ id: 'file-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5), file: abs, base: path.basename(abs), label: path.basename(abs), type: 'file', text, language: ext }] });
+    } catch (err) {
+      this.post({ type: 'action', ok: false, text: 'Falha: ' + err.message });
+    }
+  }
+
+  async attachFolder(relPath) {
+    const root = workspaceRoot();
+    if (!root) return;
+    const safe = String(relPath || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\.\.\/?/g, '');
+    const abs = safe ? path.join(root, safe) : root;
+    if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) { this.post({ type: 'action', ok: false, text: 'Pasta invalida.' }); return; }
+    const item = this.readFolderItem(abs, safe ? path.basename(abs) : workspaceName());
+    if (item.files && item.files.length) this.post({ type: 'attachItems', items: [item] });
+    this.post({ type: 'action', ok: true, text: `Pasta anexada como chip unico: ${item.label}.` });
+  }
+
+
+  replaySession() {
+    if (!this.session || !this.session.messages.length) return;
+    for (const m of this.session.messages) this.post({ type: 'message', role: m.role, text: m.text, replay: true });
   }
 
   refreshMeta() {
@@ -701,324 +830,790 @@ class ChatViewProvider {
       agents: ['auto'],
       agent: currentAgent(),
       skills: [],
-      selectedSkills: currentSkills(),
-      attachments: this.attachmentSummaries(),
+      selectedSkills: selectedSkills(),
+      mode: currentMode(),
       workspace: workspaceName(),
-      mode: cfg().get('modoExecucaoChat') || 'resposta-integrada',
+      sessionId: this.session && this.session.id,
+      sessionTitle: this.session && this.session.title,
+      modelLocked: false,
+      hasMessages: !!(this.session && this.session.messages && this.session.messages.length),
+      tokensTotal: this.session ? (this.session.tokens || 0) : 0,
+      tokensIn: this.session ? (this.session.tokensIn || 0) : 0,
+      tokensOut: this.session ? (this.session.tokensOut || 0) : 0,
       modelStatus: 'modelo: auto'
     };
     try { payload.models = modelsForUi(); } catch (_) { payload.models = FALLBACK_MODELS; }
     try { payload.agents = scanAgents(); } catch (_) { payload.agents = ['auto']; }
     try { payload.skills = scanSkills(); } catch (_) { payload.skills = []; }
-    try { payload.selectedSkills = currentSkills(); } catch (_) { payload.selectedSkills = []; }
-    payload.attachments = this.attachmentSummaries();
-    try { payload.modelStatus = payload.models.length > 1 ? `${payload.models.length} modelos locais` : 'usando modelo auto'; } catch (_) {}
+    try {
+      payload.recentSessions = loadHistory().slice(0, 3).map(s => ({
+        id: s.id,
+        title: s.title || 'Sem titulo',
+        updatedAt: s.updatedAt,
+        messages: (s.messages || []).length,
+        model: s.model || 'auto'
+      }));
+    } catch (_) { payload.recentSessions = []; }
+    try { payload.modelStatus = `${payload.models.length} modelos | ${payload.skills.length} skills`; } catch (_) {}
     this.post(payload);
   }
 
   async send(text, options) {
     const prompt = String(text || '').trim();
     if (!prompt) return;
+    const displayPrompt = String(options && options.displayText ? options.displayText : prompt).trim();
     if (this.busy) {
-      this.post({ type: 'message', role: 'assistant', text: 'Ja existe uma execucao em andamento. Aguarde a conclusao antes de enviar outro prompt.' });
+      this.post({ type: 'message', role: 'assistant', text: 'Ja existe uma execucao em andamento. A concorrencia permanece controlada no backend.' });
       return;
     }
 
     this.busy = true;
-    if (!options || options.echoUser !== false) this.post({ type: 'message', role: 'user', text: prompt });
+    const inTokens = estimateTokens(fullPrompt(prompt));
+    this.session.tokensIn = (this.session.tokensIn || 0) + inTokens;
+    this.session.tokens = (this.session.tokens || 0) + inTokens;
+    if (!options || options.echoUser !== false) this.post({ type: 'message', role: 'user', text: displayPrompt });
+    this.session.messages.push({ role: 'user', text: displayPrompt, fullText: prompt, ts: Date.now(), tokens: inTokens });
     this.post({ type: 'busy', value: true });
     this.post({ type: 'action', ok: true, text: 'Enviando para o Devin CLI...' });
+    this.refreshMeta();
 
     try {
-      const mode = cfg().get('modoExecucaoChat') || 'resposta-integrada';
-      const extra = { attachments: this.attachments.slice() };
+      const mode = currentMode();
       if (mode === 'terminal') {
-        openTerminal(prompt, extra);
-        this.post({ type: 'message', role: 'assistant', text: 'Sessao aberta no terminal integrado, ja posicionada na pasta aberta no VS Code, com os anexos no prompt.' });
+        openTerminal(prompt);
+        const reply = 'Sessao aberta no terminal integrado, ja posicionada na pasta aberta no VS Code.';
+        this.post({ type: 'message', role: 'assistant', text: reply });
+        this.session.messages.push({ role: 'assistant', text: reply, ts: Date.now() });
         return;
       }
-      const answer = await runIntegrated(prompt, extra);
+      const answer = await runIntegrated(prompt);
+      const outTokens = estimateTokens(answer);
+      this.session.tokensOut = (this.session.tokensOut || 0) + outTokens;
+      this.session.tokens = (this.session.tokens || 0) + outTokens;
       this.post({ type: 'message', role: 'assistant', text: answer });
+      this.session.messages.push({ role: 'assistant', text: answer, ts: Date.now(), tokens: outTokens });
     } catch (err) {
-      this.post({ type: 'message', role: 'assistant', text: 'Falha ao enviar para o Devin CLI: ' + (err && err.message ? err.message : String(err)) });
+      const msg = 'Falha ao enviar para o Devin CLI: ' + (err && err.message ? err.message : String(err));
+      this.post({ type: 'message', role: 'assistant', text: msg });
+      this.session.messages.push({ role: 'assistant', text: msg, ts: Date.now() });
     } finally {
       this.busy = false;
       this.post({ type: 'busy', value: false });
+      await this.persistSession();
       this.refreshMeta();
     }
   }
 
+
   html(webview) {
     const nonce = Date.now().toString(36);
+    const ICONS = {
+      history: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.4 1.6"/></svg>',
+      plus: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>',
+      refresh: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.5-3.55"/><path d="M13 3v3h-3"/></svg>',
+      terminal: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 7l2 1.5L5 10M8.5 10.5h3"/></svg>',
+      lock: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>',
+      paperclip: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 6.5L6.8 11.2a2 2 0 0 1-2.8-2.8l5.4-5.4a3 3 0 0 1 4.2 4.2l-5.4 5.4a4 4 0 0 1-5.7-5.7L7.5 2.5"/></svg>',
+      attach: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 6.5L6.8 11.2a2 2 0 0 1-2.8-2.8l5.4-5.4a3 3 0 0 1 4.2 4.2l-5.4 5.4a4 4 0 0 1-5.7-5.7L7.5 2.5"/></svg>',
+      file: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5h6.5L13 5v9.5H3z"/><path d="M9.5 1.5V5H13"/></svg>',
+      folder: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5a1 1 0 0 1 1-1h3l1.5 1.5h5.5a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/></svg>',
+      close: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
+      send: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 13.5L14 8 2 2.5 2 7l8 1-8 1z"/></svg>',
+      brain: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3a2 2 0 0 0-2 2 2 2 0 0 0-1 3.5 2 2 0 0 0 1.5 3 2 2 0 0 0 3.5 0V3.5A1.5 1.5 0 0 0 5.5 3z"/><path d="M10.5 3a2 2 0 0 1 2 2 2 2 0 0 1 1 3.5 2 2 0 0 1-1.5 3 2 2 0 0 1-3.5 0V3.5A1.5 1.5 0 0 1 10.5 3z"/></svg>',
+      bot: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5.5" width="10" height="7" rx="1.5"/><path d="M8 3v2.5M5.5 8.5h.01M10.5 8.5h.01M2 9.5v1.5M14 9.5v1.5"/></svg>',
+      mode: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5.5h12M2 8h8M2 10.5h10"/></svg>',
+      sparkle: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2l1.2 3.4L12.5 6.5 9.2 7.6 8 11l-1.2-3.4L3.5 6.5 6.8 5.4z"/></svg>',
+      caret: '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M5 3l6 5-6 5z"/></svg>'
+    };
+    const MODEL_TREE = [
+      { label: 'auto', value: 'auto' },
+      { label: 'sonnet', value: 'sonnet' },
+      { label: 'opus', value: 'opus' },
+      { label: 'swe', value: 'swe' },
+      { label: 'gpt', value: 'gpt' }
+    ];
     return `<!doctype html><html lang="pt-BR"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>
-:root{
-  --bg:var(--vscode-sideBar-background);
-  --fg:var(--vscode-foreground);
-  --muted:var(--vscode-descriptionForeground);
-  --border:var(--vscode-panel-border);
-  --input:var(--vscode-input-background);
-  --input-fg:var(--vscode-input-foreground);
-  --focus:var(--vscode-focusBorder);
-  --accent:var(--vscode-button-background);
-  --accent-fg:var(--vscode-button-foreground);
-  --secondary:var(--vscode-button-secondaryBackground);
-  --secondary-fg:var(--vscode-button-secondaryForeground);
-  --editor:var(--vscode-editor-background);
-  --hover:var(--vscode-list-hoverBackground);
-  --active:var(--vscode-list-activeSelectionBackground);
-  --active-fg:var(--vscode-list-activeSelectionForeground);
-  --code:var(--vscode-textCodeBlock-background);
-}
-*{box-sizing:border-box}
-html,body{width:100%;height:100%;padding:0;margin:0;overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--vscode-font-family);font-size:var(--vscode-font-size)}
+:root{--bg:var(--vscode-sideBar-background);--fg:var(--vscode-foreground);--muted:var(--vscode-descriptionForeground);--border:var(--vscode-panel-border);--input:var(--vscode-input-background);--input-fg:var(--vscode-input-foreground);--focus:var(--vscode-focusBorder);--accent:var(--vscode-button-background);--accent-fg:var(--vscode-button-foreground);--editor:var(--vscode-editor-background);--hover:var(--vscode-list-hoverBackground);--active:var(--vscode-list-activeSelectionBackground);--active-fg:var(--vscode-list-activeSelectionForeground);--code:var(--vscode-textCodeBlock-background)}
+*{box-sizing:border-box}html,body{width:100%;height:100%;padding:0;margin:0;overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--vscode-font-family);font-size:var(--vscode-font-size)}
 button,select,textarea{font:inherit;color:inherit}
-.app{height:100vh;display:flex;flex-direction:column;background:var(--bg)}
-.header{height:38px;min-height:38px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--bg)}
-.product{display:flex;align-items:center;gap:8px;min-width:0;font-weight:600;font-size:12px;letter-spacing:.01em;text-transform:uppercase;color:var(--muted)}
-.logo{width:18px;height:18px;border-radius:999px;background:var(--accent);color:var(--accent-fg);display:grid;place-items:center;font-size:10px;font-weight:700;flex:0 0 auto}.headerSpacer{flex:1}.iconBtn{border:0;background:transparent;color:var(--muted);width:26px;height:26px;border-radius:6px;display:grid;place-items:center;cursor:pointer}.iconBtn:hover{background:var(--hover);color:var(--fg)}.iconBtn.primary{background:var(--accent);color:var(--accent-fg)}
-.thread{flex:1;overflow:auto;padding:14px 14px 10px 14px;scrollbar-gutter:stable;display:flex;flex-direction:column;gap:16px;background:var(--editor)}
-.contextStrip{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 2px 0;color:var(--muted);font-size:11px}.ctxPill{border:1px solid var(--border);background:var(--bg);border-radius:999px;padding:3px 8px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ctxPill strong{font-weight:600;color:var(--fg)}
-.welcome{margin:auto 0;display:grid;gap:12px;padding:8px 0 18px 0}.welcomeRow{display:flex;align-items:center;gap:10px}.welcomeTitle{font-size:18px;line-height:1.25;font-weight:600}.welcomeText{color:var(--muted);line-height:1.45;max-width:560px}.starterGrid{display:grid;gap:8px;grid-template-columns:1fr}.starter{border:1px solid var(--border);background:var(--bg);color:var(--fg);border-radius:10px;text-align:left;padding:10px;cursor:pointer}.starter:hover{background:var(--hover);border-color:var(--focus)}.starter b{display:block;margin-bottom:3px}.starter span{display:block;color:var(--muted);font-size:11px;line-height:1.35}
-.msgRow{display:flex;gap:10px;align-items:flex-start}.msgRow.user{justify-content:flex-end}.avatar{width:24px;height:24px;border-radius:999px;display:grid;place-items:center;background:var(--accent);color:var(--accent-fg);font-size:11px;font-weight:700;flex:0 0 auto;margin-top:2px}.msg{max-width:92%;line-height:1.48;white-space:pre-wrap;overflow-wrap:anywhere}.msg.assistant{width:100%;padding:0 2px}.msg.user{background:var(--input);border:1px solid var(--border);border-radius:16px;padding:9px 12px;max-width:82%;box-shadow:0 1px 0 rgba(0,0,0,.08)}.msgMeta{font-size:11px;color:var(--muted);margin-bottom:4px}.msg pre{background:var(--code);border:1px solid var(--border);border-radius:8px;padding:10px;overflow:auto;white-space:pre-wrap}.msg code{font-family:var(--vscode-editor-font-family);font-size:var(--vscode-editor-font-size)}
-.composerWrap{border-top:1px solid var(--border);background:var(--bg);padding:10px 10px 9px 10px}.contextShelf{display:none;gap:6px;flex-wrap:wrap;margin:0 0 7px 0}.contextShelf.hasItems{display:flex}.shelfChip{border:1px solid var(--border);background:var(--bg);border-radius:999px;padding:3px 7px;font-size:10px;color:var(--muted);display:flex;align-items:center;gap:5px;max-width:100%}.shelfChip b{color:var(--fg);font-weight:600;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.shelfChip button{border:0;background:transparent;color:var(--muted);cursor:pointer;padding:0 1px}.shelfChip button:hover{color:var(--fg)}.composer{border:1px solid var(--border);background:var(--input);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 0 0 1px rgba(0,0,0,.02)}.composer:focus-within{border-color:var(--focus)}.inputLine{display:flex;align-items:flex-start;gap:8px;padding:8px 8px 0 8px}.mention{height:24px;border-radius:6px;background:var(--active);color:var(--active-fg);padding:3px 6px;font-size:12px;white-space:nowrap;flex:0 0 auto}textarea{width:100%;min-height:62px;max-height:200px;resize:none;background:transparent;color:var(--input-fg);border:0;outline:0;padding:3px 0 8px 0;line-height:1.4}.composerBar{display:flex;align-items:center;gap:6px;padding:6px 8px 8px 8px;border-top:1px solid var(--border)}.chip,.selectChip{height:26px;border:1px solid var(--border);background:var(--bg);color:var(--fg);border-radius:999px;padding:0 8px;display:flex;align-items:center;gap:5px;font-size:11px;white-space:nowrap;max-width:100%;min-width:0}.selectChip{appearance:none;cursor:pointer;padding-right:20px}.chip.small{padding:0 7px;color:var(--muted)}.barSpacer{flex:1;min-width:8px}.sendBtn{width:28px;height:28px;border-radius:8px;border:0;background:var(--accent);color:var(--accent-fg);cursor:pointer;display:grid;place-items:center;font-weight:700}.sendBtn:disabled{opacity:.5;cursor:not-allowed}.statusLine{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:10px;margin-top:6px;padding:0 2px}.statusLine span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.busyDot{display:none;width:7px;height:7px;border-radius:999px;background:var(--accent);animation:pulse 1s infinite}.is-busy .busyDot{display:block}.is-busy .sendBtn{opacity:.55}@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
-@media (max-width:380px){.chip.local,.chip.approvals{display:none}.msg{max-width:100%}.msg.user{max-width:88%}.composerBar{gap:4px}.selectChip{max-width:112px}.productText{display:none}}
-</style></head><body><div class="app"><header class="header"><div class="product"><div class="logo">D</div><span class="productText">Devin Cli Chat</span></div><div class="headerSpacer"></div><button type="button" class="iconBtn" data-action="newChat" title="Nova conversa">+</button><button type="button" class="iconBtn" data-action="refreshModels" title="Atualizar modelos">R</button><button type="button" class="iconBtn" data-action="terminal" title="Abrir sessao no terminal">⌁</button></header><main class="thread" id="thread"><div class="contextStrip" id="contextStrip"><span class="ctxPill">Workspace: <strong id="ctxWorkspace">${htmlEscape(workspaceName())}</strong></span><span class="ctxPill">Modelo: <strong id="ctxModel">${htmlEscape(configuredModel())}</strong></span><span class="ctxPill">Agente: <strong id="ctxAgent">${htmlEscape(currentAgent())}</strong></span></div><section class="welcome" id="welcome"><div class="welcomeRow"><div class="avatar">D</div><div><div class="welcomeTitle">Como posso ajudar neste workspace?</div><div class="welcomeText">Use o Devin CLI com contexto da pasta aberta no VS Code. Selecione modelo e agente no composer, como em uma tela de chat agentic.</div></div></div><div class="starterGrid"><button type="button" class="starter" data-action="review"><b>Revisar diff</b><span>Analisa alteracoes locais com foco produtivo.</span></button><button type="button" class="starter" data-action="starter" data-prompt="Planeje a implementacao da proxima tarefa em etapas pequenas, com riscos, testes e estrategia de rollback."><b>Planejar tarefa</b><span>Gera um plano objetivo antes de alterar codigo.</span></button><button type="button" class="starter" data-action="selection"><b>Explicar contexto</b><span>Usa arquivo aberto ou selecao atual.</span></button></div></section></main><footer class="composerWrap"><div class="contextShelf" id="contextShelf"></div><div class="composer"><div class="inputLine"><span class="mention">@devin</span><textarea id="prompt" placeholder="Use Devin CLI com o workspace atual, modelo, agente, skills e anexos..."></textarea></div><div class="composerBar"><button type="button" class="iconBtn" data-action="insertSelection" title="Adicionar contexto do editor">＋</button><button type="button" class="iconBtn" data-action="attachFiles" title="Anexar arquivos">📎</button><button type="button" class="chip small" data-action="selectSkills" title="Selecionar skills Markdown">Skills</button><span class="chip local" title="Execucao local no workspace aberto">▣ Local</span><span class="chip approvals" title="Aprovacoes padrao do Devin CLI">◇ Aprovacoes Padrao</span><select class="selectChip" id="agent" title="Agente Devin"><option value="auto">Auto</option></select><select class="selectChip" id="model" title="Modelo Devin"><option value="auto">Auto</option></select><button type="button" class="iconBtn" data-action="manualModel" title="Informar modelo manual">⚙</button><div class="barSpacer"></div><button type="button" class="sendBtn" id="send" data-action="send" title="Enviar">↑</button></div></div><div class="statusLine"><span class="busyDot"></span><span id="mode">integrado</span><span>·</span><span id="modelStatus">pronto</span></div></footer></div><script nonce="${nonce}">
+.app{height:100vh;display:flex;flex-direction:column;background:var(--bg);position:relative}
+.header{height:38px;min-height:38px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:0 10px}
+.product{display:flex;align-items:center;gap:8px;font-weight:600;font-size:12px;color:var(--muted)}
+.logo{width:20px;height:20px;display:grid;place-items:center}
+.logo svg{display:block;width:20px;height:20px}
+.headerSpacer{flex:1}
+.iconBtn{border:0;background:transparent;color:var(--muted);width:26px;height:26px;border-radius:6px;display:grid;place-items:center;cursor:pointer}
+.iconBtn:hover{background:var(--hover);color:var(--fg)}
+.iconBtn.active{background:var(--active);color:var(--active-fg)}
+.iconBtn svg{display:block}
+.thread{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:16px;background:var(--editor)}
+.welcome{margin:auto 0;display:grid;gap:14px}
+.welcomeTitle{font-size:18px;font-weight:600}
+.welcomeText{color:var(--muted);max-width:560px;font-size:12px;line-height:1.5}
+.starterGrid{display:grid;gap:8px}
+.starter{border:1px solid var(--border);background:var(--bg);color:var(--fg);border-radius:10px;text-align:left;padding:10px;cursor:pointer}
+.starter:hover{background:var(--hover);border-color:var(--focus)}
+.starter b{display:block;margin-bottom:3px;font-size:13px}
+.starter span{display:block;color:var(--muted);font-size:11px;line-height:1.4}
+.recentBlock{border:1px solid var(--border);border-radius:10px;background:var(--bg);overflow:hidden}
+.recentHead{padding:8px 10px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px}
+.recentItem{padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;flex-direction:column;gap:2px}
+.recentItem:last-child{border-bottom:0}
+.recentItem:hover{background:var(--hover)}
+.recentItem .t{font-size:13px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.recentItem .m{font-size:11px;color:var(--muted)}
+.recentEmpty{padding:10px;font-size:11px;color:var(--muted)}
+.msgRow{display:flex;gap:10px;align-items:flex-start}
+.msgRow.user{justify-content:flex-end}
+.avatar{width:24px;height:24px;border-radius:999px;background:var(--accent);color:var(--accent-fg);display:grid;place-items:center;font-size:11px;font-weight:700;flex:0 0 auto;margin-top:2px}
+.msg{max-width:92%;line-height:1.48;white-space:pre-wrap;overflow-wrap:anywhere}
+.msg.assistant{width:100%}
+.msg.user{background:var(--input);border:1px solid var(--border);border-radius:16px;padding:9px 12px;max-width:82%}
+.msgMeta{font-size:11px;color:var(--muted);margin-bottom:4px}
+.msg pre{background:var(--code);border:1px solid var(--border);border-radius:8px;padding:10px;overflow:auto;white-space:pre-wrap}
+.composerWrap{border-top:1px solid var(--border);background:var(--bg);padding:10px;position:relative}
+.composer{border:1px solid var(--border);background:var(--input);border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
+.composer:focus-within{border-color:var(--focus)}
+.inputLine{display:flex;align-items:flex-start;gap:8px;padding:8px 8px 0 8px}
+.mention{height:24px;border-radius:6px;background:var(--active);color:var(--active-fg);padding:3px 6px;font-size:12px}
+textarea{width:100%;min-height:62px;max-height:200px;resize:none;background:transparent;color:var(--input-fg);border:0;outline:0;padding:3px 0 8px 0;line-height:1.4}
+.composerBar{display:flex;align-items:center;gap:6px;padding:6px 8px 8px 8px;border-top:1px solid var(--border)}
+.chipBtn{height:26px;border:0;background:transparent;color:var(--muted);border-radius:6px;padding:0 7px;display:inline-flex;align-items:center;gap:5px;font-size:11px;white-space:nowrap;cursor:pointer;flex:0 0 auto}
+.chipBtn:hover{background:var(--hover);color:var(--fg)}
+.chipBtn:disabled{opacity:.6;cursor:not-allowed}
+.chipBtn.has{color:var(--fg)}
+.chipBtn.has svg{color:var(--accent)}
+.chipBtn .chipText{overflow:hidden;text-overflow:ellipsis;max-width:120px}
+.chipBtn .caret{opacity:.6}
+.chipBtn svg{flex:0 0 auto}
+.modelLockBadge{display:none;align-items:center;gap:3px;font-size:10px;color:var(--muted);flex:0 0 auto}
+.modelLockBadge.show{display:inline-flex}
+.barSpacer{flex:1;min-width:6px}
+.tokenInfo{font-size:10px;color:var(--muted);white-space:nowrap;flex:0 0 auto}
+.tokenPie{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex:0 0 auto;cursor:help}
+.tokenPie svg{width:18px;height:18px;display:block}
+.menu .check{display:inline-flex;align-items:center;gap:8px;padding:5px 12px;cursor:pointer}
+.menu .check:hover{background:var(--hover)}
+.menu .check input{margin:0;accent-color:var(--accent)}
+.menu .head{padding:6px 10px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.04em;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px}
+.menu .head .barSpacer{flex:1}
+.menu .head button{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:10px;text-transform:none;letter-spacing:0;padding:2px 6px;border-radius:4px}
+.menu .head button:hover{color:var(--fg);background:var(--hover)}
+.menu.browser{min-width:320px;max-width:420px}
+.menu.browser .item{padding:5px 10px}
+.menu.browser .browserItem{justify-content:space-between}
+.menu.browser .rowBtn{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:14px;width:18px;height:18px;border-radius:4px;display:grid;place-items:center}
+.menu.browser .rowBtn:hover{background:var(--hover);color:var(--fg)}
+.busyDot{display:none;width:7px;height:7px;border-radius:999px;background:var(--accent);animation:pulse 1s infinite;flex:0 0 auto}
+.is-busy .busyDot{display:block}.is-busy .sendBtn{opacity:.55}
+@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+.sendBtn{width:28px;height:28px;border-radius:8px;border:0;background:var(--accent);color:var(--accent-fg);cursor:pointer;display:grid;place-items:center;flex:0 0 auto}
+.sendBtn:disabled{opacity:.5}
+.sendBtn svg{display:block}
+.modelGate{display:none;background:var(--input);border:1px solid var(--focus);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--fg);margin:0 0 8px 0;align-items:center;gap:8px}
+.modelGate.show{display:flex}
+.contextChips{display:flex;flex-wrap:wrap;gap:5px;padding:6px 8px 0 8px}
+.contextChips:empty{padding:0}
+.attachChip{display:inline-flex;align-items:center;gap:5px;background:var(--bg);border:1px dashed var(--border);border-radius:8px;padding:3px 7px;font-size:11px;color:var(--fg);max-width:240px;cursor:pointer}
+.attachChip:hover{border-style:solid;border-color:var(--focus);background:var(--hover)}
+.attachChip.attached{border-style:solid;background:var(--active);color:var(--active-fg)}
+.attachChip .lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px}
+.attachChip .rm{border:0;background:transparent;color:inherit;cursor:pointer;display:grid;place-items:center;padding:0;width:14px;height:14px;border-radius:3px}
+.attachChip .rm:hover{background:rgba(127,127,127,.25)}
+.attachChip svg{flex:0 0 auto;opacity:.85}
+.panel{position:absolute;top:38px;right:8px;width:300px;max-height:60vh;overflow:auto;background:var(--bg);border:1px solid var(--border);border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,.3);z-index:30;display:none}
+.panel.open{display:block}
+.panel header{padding:8px 10px;border-bottom:1px solid var(--border);font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px}
+.panel header .barSpacer{flex:1}
+.panel header button{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:11px}
+.panel header button:hover{color:var(--fg)}
+.skillItem{padding:6px 10px;display:flex;align-items:center;gap:8px;cursor:pointer;border-bottom:1px solid var(--border)}
+.skillItem:hover{background:var(--hover)}
+.skillItem input{margin:0}
+.skillItem.empty{color:var(--muted);cursor:default;font-size:11px;padding:12px 10px}
+.histItem{padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;flex-direction:column;gap:2px}
+.histItem:hover{background:var(--hover)}
+.histItem .t{font-size:12px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.histItem .m{font-size:10px;color:var(--muted);display:flex;justify-content:space-between;gap:6px}
+.histItem .del{margin-left:auto;border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:11px}
+.histItem .del:hover{color:var(--fg)}
+.menu{position:absolute;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 22px rgba(0,0,0,.4);z-index:40;min-width:200px;max-height:55vh;overflow:auto;padding:4px 0;font-size:12px}
+.menu .item{display:flex;align-items:center;gap:6px;padding:5px 12px;cursor:pointer;justify-content:space-between;white-space:nowrap}
+.menu .item:hover,.menu .item.activeHover{background:var(--hover)}
+.menu .item.selected{color:var(--accent);font-weight:600}
+.menu .item .arrow{opacity:.5;font-size:10px;flex:0 0 auto}
+.menu .empty{padding:8px 12px;color:var(--muted);font-size:11px}
+body.narrow .chipBtn .chipText{display:none}
+body.narrow .chipBtn{padding:0 6px;width:30px;justify-content:center}
+body.narrow .chipBtn.alwaysText .chipText{display:inline}
+body.narrow .chipBtn.alwaysText{width:auto;padding:0 9px}
+body.narrow .tokenInfo{display:none}
+body.narrow .tokenPie{display:none}
+body.narrow .modelLockBadge.show span{display:none}
+</style></head><body><div class="app">
+<header class="header">
+  <div class="product">
+    <div class="logo"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><defs><radialGradient id="hg" cx="50%" cy="40%" r="60%"><stop offset="0%" stop-color="#5eead4"/><stop offset="55%" stop-color="#22d3ee"/><stop offset="100%" stop-color="#0e7490"/></radialGradient></defs><g transform="translate(12 12)" fill="url(#hg)"><circle cx="0" cy="-5.5" r="3.2"/><circle cx="4.8" cy="-2.75" r="3.2"/><circle cx="4.8" cy="2.75" r="3.2"/><circle cx="0" cy="5.5" r="3.2"/><circle cx="-4.8" cy="2.75" r="3.2"/><circle cx="-4.8" cy="-2.75" r="3.2"/></g></svg></div>
+    <span>Devin Cli Chat</span>
+  </div>
+  <div class="headerSpacer"></div>
+  <button type="button" class="iconBtn" data-action="toggleHistory" title="Historico">${ICONS.history}</button>
+  <button type="button" class="iconBtn" data-action="newChat" title="Nova conversa">${ICONS.plus}</button>
+  <button type="button" class="iconBtn" data-action="refreshModels" title="Atualizar modelos">${ICONS.refresh}</button>
+  <button type="button" class="iconBtn" data-action="terminal" title="Abrir sessao no terminal">${ICONS.terminal}</button>
+</header>
+<div id="historyPanel" class="panel"><header>Historico <div class="barSpacer"></div><button data-action="clearHistory">Limpar</button></header><div id="historyList"></div></div>
+
+<main class="thread" id="thread">
+  <section class="welcome" id="welcome">
+    <div class="welcomeTitle">Como posso ajudar neste workspace?</div>
+    <div class="welcomeText">Selecione modelo, agente, modo e skills antes de enviar. As ultimas conversas ficam disponiveis para continuar.</div>
+    <div id="recentBlock" class="recentBlock" style="display:none">
+      <div class="recentHead">${ICONS.history} Conversas recentes</div>
+      <div id="recentList"></div>
+    </div>
+    <div class="starterGrid">
+      <button type="button" class="starter" data-action="review"><b>Revisar diff</b><span>Analisa alteracoes locais.</span></button>
+      <button type="button" class="starter" data-action="starter" data-prompt="Planeje a implementacao da proxima tarefa em etapas pequenas, com riscos, testes e estrategia de rollback."><b>Planejar tarefa</b><span>Plano objetivo antes de codar.</span></button>
+      <button type="button" class="starter" data-action="selection"><b>Explicar contexto</b><span>Usa arquivo aberto ou selecao.</span></button>
+    </div>
+  </section>
+</main>
+<footer class="composerWrap">
+  <div id="modelGate" class="modelGate"><b>Selecione um modelo</b><span>antes de iniciar a conversa.</span></div>
+  <div class="composer">
+    <div id="contextChips" class="contextChips"></div>
+    <div class="inputLine"><textarea id="prompt" placeholder="Escreva sua mensagem..."></textarea></div>
+    <div class="composerBar">
+      <button type="button" class="chipBtn" data-action="attachMenu" id="attachBtn" title="Anexar contexto">${ICONS.attach}<span class="chipText">Anexar</span></button>
+      <button type="button" class="chipBtn" data-action="openModelMenu" id="modelChip" title="Modelo">${ICONS.brain}<span class="chipText" id="modelChipText">Modelo</span><span class="caret">${ICONS.caret}</span></button>
+      <button type="button" class="chipBtn" data-action="openAgentMenu" id="agentChip" title="Agente">${ICONS.bot}<span class="chipText" id="agentChipText">Agente</span><span class="caret">${ICONS.caret}</span></button>
+      <button type="button" class="chipBtn" data-action="openModeMenu" id="modeChip" title="Modo">${ICONS.mode}<span class="chipText" id="modeChipText">Modo</span><span class="caret">${ICONS.caret}</span></button>
+      <button type="button" class="chipBtn" data-action="openSkillsMenu" id="skillsBtn" title="Skills">${ICONS.sparkle}<span class="chipText">Skills <span id="skillsCount">0</span></span></button>
+      <span class="barSpacer"></span>
+      <span class="busyDot"></span>
+      <span class="tokenPie" id="tokenPie" title="Tokens"></span>
+      <button class="sendBtn" id="send" type="button" data-action="send" title="Enviar">${ICONS.send}</button>
+    </div>
+  </div>
+</footer>
+</div>
+<script nonce="${nonce}">
 (function(){
-  'use strict';
-  var vscode = acquireVsCodeApi();
-  var busy = false;
+'use strict';
+var vscode = acquireVsCodeApi();
+var ICONS = ${JSON.stringify(ICONS)};
+var MODEL_TREE = ${JSON.stringify(MODEL_TREE)};
+var META = { skills: [], selectedSkills: [], modelLocked: false, hasMessages: false, model: 'auto', agent: 'auto', mode: 'resposta-integrada', agents: ['auto'], tokensTotal: 0, tokensIn: 0, tokensOut: 0, recentSessions: [] };
+var busy = false;
+var pendingSelection = null;
+var attachedItems = [];
+var openMenu = null;
 
-  function byId(id){ return document.getElementById(id); }
-  function text(value){ return String(value == null ? '' : value); }
-  function setStatus(value){ var el = byId('modelStatus'); if(el) el.textContent = text(value); }
-  function post(message){ vscode.postMessage(message); }
-  function setBusy(value){
-    busy = !!value;
-    document.body.classList.toggle('is-busy', busy);
-    var send = byId('send');
-    if(send) send.disabled = busy;
-  }
-  function setPrompt(value){ var el = byId('prompt'); if(el){ el.value = text(value); if(typeof el.focus === 'function') el.focus(); } }
-  function getPrompt(){ var el = byId('prompt'); return el ? el.value : ''; }
-  function appendPrompt(value){
-    var incoming = text(value).trim();
-    if(!incoming) return;
-    var current = getPrompt().trim();
-    setPrompt(current ? current + '\\n\\n' + incoming : incoming);
-  }
-  function hideWelcome(){
-    var welcome = byId('welcome');
-    if(welcome) welcome.style.display = 'none';
-  }
-  function clearMessages(){
-    var thread = byId('thread');
-    if(thread){
-      var rows = Array.prototype.slice.call(thread.querySelectorAll('.msgRow'));
-      rows.forEach(function(row){ row.parentNode.removeChild(row); });
-    }
-    var welcome = byId('welcome');
-    if(welcome) welcome.style.display = 'grid';
-    setBusy(false);
-    setStatus('pronto');
-    setPrompt('');
-  }
-  function addMessage(role, value){
-    hideWelcome();
-    var thread = byId('thread');
-    if(!thread) return;
-    var row = document.createElement('div');
-    row.className = 'msgRow ' + (role === 'user' ? 'user' : 'assistant');
-    if(role !== 'user'){
-      var avatar = document.createElement('div');
-      avatar.className = 'avatar';
-      avatar.textContent = 'D';
-      row.appendChild(avatar);
-    }
-    var msg = document.createElement('div');
-    msg.className = 'msg ' + (role === 'user' ? 'user' : 'assistant');
-    if(role !== 'user'){
-      var meta = document.createElement('div');
-      meta.className = 'msgMeta';
-      meta.textContent = 'Devin Cli Chat';
-      msg.appendChild(meta);
-    }
-    renderContent(msg, text(value));
-    row.appendChild(msg);
-    thread.appendChild(row);
-    thread.scrollTop = thread.scrollHeight;
-  }
-  function renderContent(el, value){
-    var fence = String.fromCharCode(96,96,96);
-    var parts = value.split(fence);
-    if(parts.length === 1){
-      el.appendChild(document.createTextNode(value));
-      return;
-    }
-    for(var i=0;i<parts.length;i++){
-      if(i % 2 === 0){
-        el.appendChild(document.createTextNode(parts[i]));
-      }else{
-        var pre = document.createElement('pre');
-        var code = document.createElement('code');
-        code.textContent = parts[i].replace(/^\\w+\\n/, '');
-        pre.appendChild(code);
-        el.appendChild(pre);
-      }
-    }
-  }
-  function fillSelect(id, items, selected){
-    var sel = byId(id);
-    if(!sel) return;
-    var chosen = selected || sel.value || 'auto';
-    var seen = {};
-    var list = Array.isArray(items) ? items.slice() : [];
-    if(list.indexOf(chosen) < 0) list.unshift(chosen);
-    if(list.indexOf('auto') < 0) list.unshift('auto');
-    sel.innerHTML = '';
-    list.forEach(function(item){
-      var value = text(item).trim();
-      if(!value || seen[value]) return;
-      seen[value] = true;
-      var option = document.createElement('option');
-      option.value = value;
-      option.textContent = value === 'auto' ? 'Auto' : value;
-      if(value === chosen) option.selected = true;
-      sel.appendChild(option);
-    });
-  }
+function byId(id){ return document.getElementById(id); }
+function txt(v){ return String(v == null ? '' : v); }
+function post(m){ vscode.postMessage(m); }
+function setStatus(v){ /* status removido da barra */ }
+function estTokens(t){ if(!t) return 0; return Math.max(1, Math.ceil(String(t).length/4)); }
 
-  function renderShelf(attachments, skills){
-    var shelf = byId('contextShelf');
-    if(!shelf) return;
-    shelf.innerHTML = '';
-    var hasItems = false;
-    (Array.isArray(attachments) ? attachments : []).forEach(function(file){
-      hasItems = true;
-      var chip = document.createElement('span');
-      chip.className = 'shelfChip';
-      var label = document.createElement('b');
-      label.textContent = file.relativePath || file.name || 'arquivo';
-      var meta = document.createElement('span');
-      meta.textContent = file.truncated ? 'anexo truncado' : 'anexo';
-      var remove = document.createElement('button');
-      remove.type = 'button';
-      remove.title = 'Remover anexo';
-      remove.textContent = '×';
-      remove.setAttribute('data-remove-attachment', file.id || '');
-      chip.appendChild(label); chip.appendChild(meta); chip.appendChild(remove); shelf.appendChild(chip);
-    });
-    (Array.isArray(skills) ? skills : []).forEach(function(skill){
-      hasItems = true;
-      var chip = document.createElement('span');
-      chip.className = 'shelfChip';
-      var label = document.createElement('b');
-      label.textContent = '#' + skill;
-      var meta = document.createElement('span');
-      meta.textContent = 'skill';
-      chip.appendChild(label); chip.appendChild(meta); shelf.appendChild(chip);
-    });
-    shelf.classList.toggle('hasItems', hasItems);
-  }
-  function sendPrompt(value){
-    var prompt = text(value).trim();
-    if(!prompt){ setStatus('Digite uma mensagem para enviar ao Devin CLI.'); return; }
-    if(busy){ setStatus('Aguarde a resposta atual antes de enviar outra mensagem.'); return; }
-    addMessage('user', prompt);
-    setPrompt('');
-    setBusy(true);
-    setStatus('Enviando para o Devin CLI...');
-    post({ type: 'send', text: prompt, echo: false });
-  }
-  function action(name, element){
-    if(name === 'send') return sendPrompt(getPrompt());
-    if(name === 'newChat'){ clearMessages(); return post({ type: 'newChat' }); }
-    if(name === 'terminal') return post({ type: 'terminal', text: getPrompt() });
-    if(name === 'attachFiles'){ setStatus('Selecionando arquivos...'); return post({ type: 'attachFiles' }); }
-    if(name === 'selectSkills'){ setStatus('Selecionando skills...'); return post({ type: 'selectSkills' }); }
-    if(name === 'manualModel') return post({ type: 'manualModel' });
-    if(name === 'refreshModels'){ setStatus('Atualizando modelos locais...'); return post({ type: 'refreshModels' }); }
-    if(name === 'insertSelection') return post({ type: 'insertSelection' });
-    if(name === 'review'){ setBusy(true); setStatus('Preparando revisao do diff...'); return post({ type: 'review' }); }
-    if(name === 'selection'){ setBusy(true); setStatus('Lendo contexto do editor...'); return post({ type: 'selection' }); }
-    if(name === 'starter') return sendPrompt(element.getAttribute('data-prompt') || '');
-  }
+function setBusy(v){ busy = !!v; document.body.classList.toggle('is-busy', busy); var s = byId('send'); if(s) s.disabled = false; updateGate(); }
+function setPrompt(v){ var el = byId('prompt'); if(el){ el.value = txt(v); el.focus && el.focus(); updateTokens(); } }
+function getPrompt(){ var el = byId('prompt'); return el ? el.value : ''; }
+function appendPrompt(v){ var i = txt(v).trim(); if(!i) return; var c = getPrompt().trim(); setPrompt(c ? c + '\\n\\n' + i : i); }
+function hideWelcome(){ var w = byId('welcome'); if(w) w.style.display = 'none'; }
+function showWelcome(){ var w = byId('welcome'); if(w) w.style.display = 'grid'; renderRecent(); }
 
-  document.addEventListener('click', function(event){
-    var remove = event.target && event.target.closest ? event.target.closest('[data-remove-attachment]') : null;
-    if(remove){
-      event.preventDefault();
-      post({ type: 'removeAttachment', id: remove.getAttribute('data-remove-attachment') || '' });
-      return;
-    }
-    var button = event.target && event.target.closest ? event.target.closest('[data-action]') : null;
-    if(!button) return;
-    event.preventDefault();
-    try { action(button.getAttribute('data-action'), button); }
-    catch(err){ setStatus('Falha no clique: ' + (err && err.message ? err.message : String(err))); }
+function updateGate(){
+  var gate = byId('modelGate'); if(!gate) return;
+  var needs = !META.hasMessages && !META.model;
+  gate.classList.toggle('show', needs);
+  var s = byId('send'); if(s) s.disabled = needs;
+}
+
+var MODEL_LIMITS = {
+  'auto': 200000,
+  'sonnet': 200000,
+  'opus': 200000,
+  'swe': 200000,
+  'gpt': 400000
+};
+function modelLimit(){ return MODEL_LIMITS[META.model] || 200000; }
+function pieSlice(cx, cy, r, a0, a1){
+  var x0 = cx + r * Math.sin(a0), y0 = cy - r * Math.cos(a0);
+  var x1 = cx + r * Math.sin(a1), y1 = cy - r * Math.cos(a1);
+  var large = (a1 - a0) > Math.PI ? 1 : 0;
+  return 'M' + cx + ' ' + cy + ' L' + x0.toFixed(2) + ' ' + y0.toFixed(2) + ' A' + r + ' ' + r + ' 0 ' + large + ' 1 ' + x1.toFixed(2) + ' ' + y1.toFixed(2) + ' Z';
+}
+function fmtTok(n){
+  if(n >= 1000000) return (n/1000000).toFixed(1).replace(/\\.0$/,'') + 'M';
+  if(n >= 1000) return (n/1000).toFixed(1).replace(/\\.0$/,'') + 'k';
+  return String(n);
+}
+function attachmentTextForTokens(item){
+  if(!item) return '';
+  if(item.type === 'folder' && item.files){ return item.files.map(function(f){ return f.text || ''; }).join('\n'); }
+  return item.text || '';
+}
+function updateTokens(){
+  var el = byId('tokenPie'); if(!el) return;
+  var promptT = estTokens(getPrompt());
+  for(var i=0;i<attachedItems.length;i++) promptT += estTokens(attachmentTextForTokens(attachedItems[i]));
+  var session = META.tokensTotal || 0;
+  var limit = modelLimit();
+  var used = Math.min(limit, session);
+  var draft = Math.min(limit - used, promptT);
+  var TWO_PI = Math.PI * 2;
+  var a1 = TWO_PI * (used / limit);
+  var a2 = a1 + TWO_PI * (draft / limit);
+  if(a1 >= TWO_PI) a1 = TWO_PI - 0.001;
+  if(a2 >= TWO_PI) a2 = TWO_PI - 0.001;
+  var svg = '<svg viewBox="0 0 20 20">';
+  svg += '<circle cx="10" cy="10" r="9" fill="#bdbdbd" stroke="#fff" stroke-width="1"/>';
+  if(a1 > 0.001) svg += '<path d="' + pieSlice(10, 10, 9, 0, a1) + '" fill="#111" stroke="#fff" stroke-width="0.5"/>';
+  if(a2 > a1 + 0.001) svg += '<path d="' + pieSlice(10, 10, 9, a1, a2) + '" fill="#777" stroke="#fff" stroke-width="0.5"/>';
+  svg += '</svg>';
+  el.innerHTML = svg;
+  var pct = ((used + draft) / limit * 100).toFixed(1);
+  el.title = 'Modelo: ' + META.model + '\\nLimite: ' + fmtTok(limit) + ' tokens\\nUsado na sessao: ' + fmtTok(session) + '\\nPrompt atual: ~' + fmtTok(promptT) + '\\nTotal: ~' + pct + '%';
+}
+
+function clearMessages(){
+  var t = byId('thread');
+  if(t){ Array.prototype.slice.call(t.querySelectorAll('.msgRow')).forEach(function(r){ r.parentNode.removeChild(r); }); }
+  showWelcome();
+  attachedItems = []; renderContextChips();
+  setBusy(false); setPrompt(''); updateTokens();
+}
+
+function renderRecent(){
+  var blk = byId('recentBlock'); var list = byId('recentList');
+  if(!blk || !list) return;
+  list.innerHTML = '';
+  var items = META.recentSessions || [];
+  if(!items.length){ blk.style.display = 'none'; return; }
+  blk.style.display = 'block';
+  items.slice(0, 3).forEach(function(s){
+    var div = document.createElement('div'); div.className = 'recentItem';
+    var t = document.createElement('div'); t.className = 't'; t.textContent = s.title || 'Sem titulo';
+    var m = document.createElement('div'); m.className = 'm';
+    var when = s.updatedAt ? new Date(s.updatedAt).toLocaleString() : '';
+    m.textContent = (s.messages || 0) + ' msgs - ' + (s.model || 'auto') + ' - ' + when;
+    div.appendChild(t); div.appendChild(m);
+    div.addEventListener('click', function(){ post({ type: 'loadSession', id: s.id }); });
+    list.appendChild(div);
   });
+}
 
-  var promptEl = byId('prompt');
-  if(promptEl){
-    promptEl.addEventListener('keydown', function(event){
-      if(event.key === 'Enter' && !event.shiftKey){
-        event.preventDefault();
-        sendPrompt(getPrompt());
-      }
-    });
+function attachmentReference(item){
+  if(!item) return '';
+  if(item.type === 'folder') return '📎 ' + (item.label || item.base || 'pasta');
+  if(item.type === 'file') return '📎 ' + (item.label || item.base || 'arquivo');
+  return '📎 Contexto: ' + (item.label || 'selecao');
+}
+function attachmentFullBlock(item){
+  if(!item) return '';
+  var fence = String.fromCharCode(96,96,96);
+  if(item.type === 'folder'){
+    var files = item.files || [];
+    return files.map(function(f){
+      var lang = f.language || '';
+      return '\n\nArquivo anexado ' + (f.rel || f.file || f.base || 'arquivo') + ' (' + lang + '):\n' + fence + lang + '\n' + (f.text || '') + '\n' + fence;
+    }).join('');
   }
-  var modelEl = byId('model');
-  if(modelEl){
-    modelEl.addEventListener('change', function(event){
-      setStatus('Modelo selecionado: ' + event.target.value);
-      post({ type: 'setModel', value: event.target.value });
-    });
-  }
-  var agentEl = byId('agent');
-  if(agentEl){
-    agentEl.addEventListener('change', function(event){
-      setStatus('Agente selecionado: ' + event.target.value);
-      post({ type: 'setAgent', value: event.target.value });
-    });
-  }
+  var heading = item.type === 'file' ? ('Arquivo anexado ' + (item.file || item.label)) : ('Contexto anexado de ' + item.label);
+  return '\n\n' + heading + ' (' + (item.language||'') + '):\n' + fence + (item.language||'') + '\n' + (item.text || '') + '\n' + fence;
+}
 
-  window.addEventListener('message', function(event){
-    var message = event.data || {};
-    if(message.type === 'meta'){
-      fillSelect('model', message.models || ['auto'], message.model || 'auto');
-      fillSelect('agent', message.agents || ['auto'], message.agent || 'auto');
-      renderShelf(message.attachments || [], message.selectedSkills || []);
-      var w = byId('ctxWorkspace');
-      var m = byId('ctxModel');
-      var a = byId('ctxAgent');
-      var mode = byId('mode');
-      if(w) w.textContent = message.workspace || 'sem workspace';
-      if(m) m.textContent = message.model || 'auto';
-      if(a) a.textContent = message.agent || 'auto';
-      if(mode) mode.textContent = message.mode === 'terminal' ? 'terminal' : 'integrado';
-      setStatus(message.modelStatus || 'pronto');
+function renderContextChips(){
+  var bar = byId('contextChips'); if(!bar) return;
+  bar.innerHTML = '';
+  attachedItems.forEach(function(sel, idx){
+    var chip = document.createElement('span'); chip.className = 'attachChip attached';
+    var icn = sel.type === 'folder' ? ICONS.folder : (sel.type === 'file' ? ICONS.file : ICONS.paperclip);
+    chip.innerHTML = icn + '<span class="lbl" title="' + (sel.file||'') + '">' + (sel.label || '') + '</span>';
+    var rm = document.createElement('button'); rm.className = 'rm'; rm.type = 'button'; rm.title = 'Remover'; rm.innerHTML = ICONS.close;
+    rm.addEventListener('click', function(e){ e.stopPropagation(); attachedItems.splice(idx, 1); renderContextChips(); updateTokens(); });
+    chip.appendChild(rm);
+    bar.appendChild(chip);
+  });
+  if(pendingSelection && !attachedItems.some(function(a){ return a.label === pendingSelection.label && a.type !== 'file'; })){
+    var sug = document.createElement('span'); sug.className = 'attachChip pending'; sug.title = 'Clique para anexar selecao do editor';
+    sug.innerHTML = ICONS.paperclip + '<span class="lbl">' + pendingSelection.label + '</span>';
+    sug.addEventListener('click', function(){ attachedItems.push(pendingSelection); pendingSelection = null; renderContextChips(); updateTokens(); });
+    var x = document.createElement('button'); x.className = 'rm'; x.type = 'button'; x.title = 'Descartar selecao'; x.innerHTML = ICONS.close;
+    x.addEventListener('click', function(e){ e.stopPropagation(); pendingSelection = null; renderContextChips(); updateTokens(); });
+    sug.appendChild(x);
+    bar.appendChild(sug);
+  }
+}
+
+
+function addMessage(role, value){
+  hideWelcome();
+  var thread = byId('thread'); if(!thread) return;
+  var row = document.createElement('div');
+  row.className = 'msgRow ' + (role === 'user' ? 'user' : 'assistant');
+  if(role !== 'user'){ var av = document.createElement('div'); av.className = 'avatar'; av.textContent = 'D'; row.appendChild(av); }
+  var msg = document.createElement('div'); msg.className = 'msg ' + (role === 'user' ? 'user' : 'assistant');
+  if(role !== 'user'){ var meta = document.createElement('div'); meta.className = 'msgMeta'; meta.textContent = 'Devin'; msg.appendChild(meta); }
+  renderContent(msg, txt(value));
+  row.appendChild(msg);
+  thread.appendChild(row);
+  thread.scrollTop = thread.scrollHeight;
+}
+function renderContent(el, value){
+  var fence = String.fromCharCode(96,96,96);
+  var parts = value.split(fence);
+  if(parts.length === 1){ el.appendChild(document.createTextNode(value)); return; }
+  for(var i=0;i<parts.length;i++){
+    if(i % 2 === 0) el.appendChild(document.createTextNode(parts[i]));
+    else { var pre = document.createElement('pre'); var code = document.createElement('code'); code.textContent = parts[i].replace(/^\\w+\\n/, ''); pre.appendChild(code); el.appendChild(pre); }
+  }
+}
+
+function sendPrompt(value){
+  var basePrompt = txt(value).trim();
+  if(!basePrompt){ return; }
+  if(!META.hasMessages && !META.model){ var mg = byId('modelGate'); if(mg) mg.classList.add('show'); return; }
+  var refs = attachedItems.map(attachmentReference).filter(Boolean);
+  var displayText = basePrompt + (refs.length ? '\n\n' + refs.join(', ') : '');
+  var fullText = basePrompt + attachedItems.map(attachmentFullBlock).join('');
+  addMessage('user', displayText);
+  setPrompt('');
+  attachedItems = [];
+  renderContextChips();
+  setBusy(true);
+  post({ type: 'send', text: fullText, displayText: displayText, echo: false });
+}
+
+
+function togglePanel(id, other){
+  var p = byId(id); if(!p) return false;
+  var open = !p.classList.contains('open');
+  if(other){ var o = byId(other); if(o) o.classList.remove('open'); }
+  p.classList.toggle('open', open);
+  return open;
+}
+
+function renderHistory(sessions){
+  var list = byId('historyList'); if(!list) return;
+  list.innerHTML = '';
+  if(!sessions || !sessions.length){ var d = document.createElement('div'); d.className = 'skillItem empty'; d.textContent = 'Sem conversas anteriores.'; list.appendChild(d); return; }
+  sessions.forEach(function(s){
+    var div = document.createElement('div'); div.className = 'histItem';
+    var t = document.createElement('div'); t.className = 't'; t.textContent = s.title || s.id;
+    var m = document.createElement('div'); m.className = 'm';
+    var when = new Date(s.updatedAt || s.createdAt || Date.now());
+    var info = document.createElement('span'); info.textContent = (s.messages||[]).length + ' msgs - ' + when.toLocaleString();
+    var del = document.createElement('button'); del.className = 'del'; del.textContent = 'X'; del.title = 'Excluir';
+    del.addEventListener('click', function(e){ e.stopPropagation(); post({ type: 'deleteSession', id: s.id }); });
+    m.appendChild(info); m.appendChild(del);
+    div.appendChild(t); div.appendChild(m);
+    div.addEventListener('click', function(){ post({ type: 'loadSession', id: s.id }); byId('historyPanel').classList.remove('open'); });
+    list.appendChild(div);
+  });
+}
+
+function renderSkills(){
+  var list = byId('skillsList'); if(!list) return;
+  list.innerHTML = '';
+  var skills = META.skills || []; var sel = new Set(META.selectedSkills || []);
+  if(!skills.length){ var d = document.createElement('div'); d.className = 'skillItem empty'; d.textContent = 'Nenhuma skill em .cognition/skills'; list.appendChild(d); return; }
+  skills.forEach(function(name){
+    var item = document.createElement('label'); item.className = 'skillItem';
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = sel.has(name);
+    cb.addEventListener('change', function(){ post({ type: 'toggleSkill', value: name }); });
+    var span = document.createElement('span'); span.textContent = name;
+    item.appendChild(cb); item.appendChild(span);
+    list.appendChild(item);
+  });
+  var btn = byId('skillsBtn'); if(btn) btn.classList.toggle('has', sel.size > 0);
+  var c = byId('skillsCount'); if(c) c.textContent = sel.size;
+}
+
+function closeAllMenus(){
+  document.querySelectorAll('.menu').forEach(function(m){ m.parentNode && m.parentNode.removeChild(m); });
+  openMenu = null;
+}
+
+function buildMenu(items, anchor, onPick, level){
+  var menu = document.createElement('div'); menu.className = 'menu';
+  menu.dataset.level = level;
+  if(!items || !items.length){ var e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Nenhuma opcao'; menu.appendChild(e); }
+  items.forEach(function(it){
+    var row = document.createElement('div'); row.className = 'item';
+    var lbl = document.createElement('span'); lbl.textContent = it.label;
+    row.appendChild(lbl);
+    if(it.children && it.children.length){
+      var arr = document.createElement('span'); arr.className = 'arrow'; arr.innerHTML = ICONS.caret;
+      row.appendChild(arr);
+      row.addEventListener('mouseenter', function(){
+        document.querySelectorAll('.menu').forEach(function(m){ if(Number(m.dataset.level) > level) m.parentNode && m.parentNode.removeChild(m); });
+        Array.prototype.slice.call(menu.querySelectorAll('.item.activeHover')).forEach(function(x){ x.classList.remove('activeHover'); });
+        row.classList.add('activeHover');
+        var sub = buildMenu(it.children, row, onPick, level + 1);
+        positionMenuBeside(sub, row);
+      });
+      row.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    } else {
+      if(it.value === META.model) row.classList.add('selected');
+      row.addEventListener('mouseenter', function(){
+        document.querySelectorAll('.menu').forEach(function(m){ if(Number(m.dataset.level) > level) m.parentNode && m.parentNode.removeChild(m); });
+      });
+      row.addEventListener('click', function(ev){ ev.stopPropagation(); onPick(it.value); closeAllMenus(); });
     }
-    if(message.type === 'message') addMessage(message.role || 'assistant', message.text || '');
-    if(message.type === 'busy') setBusy(!!message.value);
-    if(message.type === 'insertPrompt') appendPrompt(message.text || '');
-    if(message.type === 'action') setStatus(message.text || (message.ok ? 'ok' : 'falha'));
+    menu.appendChild(row);
   });
+  document.body.appendChild(menu);
+  return menu;
+}
 
-  window.addEventListener('error', function(event){
-    setStatus('Erro no painel: ' + (event.message || 'erro desconhecido'));
-  });
-  window.addEventListener('unhandledrejection', function(event){
-    setStatus('Erro no painel: ' + (event.reason && event.reason.message ? event.reason.message : String(event.reason || 'promise rejeitada')));
-  });
+function positionMenuAnchor(menu, anchor){
+  var r = anchor.getBoundingClientRect();
+  var mw = menu.offsetWidth || 220;
+  var mh = menu.offsetHeight || 200;
+  var top = r.top - mh - 4;
+  if(top < 8) top = r.bottom + 4;
+  var left = r.left;
+  if(left + mw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - mw - 8);
+  menu.style.left = left + 'px'; menu.style.top = top + 'px';
+}
+function positionMenuBeside(menu, anchorRow){
+  var r = anchorRow.getBoundingClientRect();
+  var mw = menu.offsetWidth || 220;
+  var mh = menu.offsetHeight || 200;
+  var left = r.right + 2;
+  if(left + mw > window.innerWidth - 8) left = Math.max(8, r.left - mw - 2);
+  var top = r.top;
+  if(top + mh > window.innerHeight - 8) top = Math.max(8, window.innerHeight - mh - 8);
+  menu.style.left = left + 'px'; menu.style.top = top + 'px';
+}
 
-  setBusy(false);
-  setStatus('pronto');
-  post({ type: 'ready' });
+function openModelMenu(){
+  closeAllMenus();
+  var anchor = byId('modelChip');
+  var menu = buildMenu(MODEL_TREE, anchor, function(value){ post({ type: 'setModel', value: value || 'auto' }); }, 1);
+  positionMenuAnchor(menu, anchor);
+  openMenu = 'model';
+}
+
+function openAgentMenu(){
+  closeAllMenus();
+  var anchor = byId('agentChip');
+  var items = (META.agents || ['auto']).map(function(a){ return { label: a, value: a }; });
+  var menu = buildMenu(items, anchor, function(value){ post({ type: 'setAgent', value: value }); }, 1);
+  positionMenuAnchor(menu, anchor);
+  openMenu = 'agent';
+}
+
+function openModeMenu(){
+  closeAllMenus();
+  var anchor = byId('modeChip');
+  var items = [
+    { label: 'Integrado (resposta no chat)', value: 'resposta-integrada' },
+    { label: 'Terminal', value: 'terminal' }
+  ];
+  var menu = buildMenu(items, anchor, function(value){ post({ type: 'setMode', value: value }); }, 1);
+  positionMenuAnchor(menu, anchor);
+  openMenu = 'mode';
+}
+
+function openSkillsMenu(){
+  closeAllMenus();
+  var anchor = byId('skillsBtn');
+  var menu = document.createElement('div'); menu.className = 'menu'; menu.dataset.level = 1;
+  var head = document.createElement('div'); head.className = 'head';
+  var title = document.createElement('span'); title.textContent = 'Skills disponiveis';
+  var sp = document.createElement('span'); sp.className = 'barSpacer';
+  head.appendChild(title); head.appendChild(sp);
+  menu.appendChild(head);
+  var skills = META.skills || []; var sel = new Set(META.selectedSkills || []);
+  if(!skills.length){ var e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Nenhuma skill em .cognition/skills'; menu.appendChild(e); }
+  skills.forEach(function(name){
+    var lab = document.createElement('label'); lab.className = 'check';
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = sel.has(name);
+    cb.addEventListener('change', function(ev){ ev.stopPropagation(); post({ type: 'toggleSkill', value: name }); if(cb.checked) sel.add(name); else sel.delete(name); });
+    var span = document.createElement('span'); span.textContent = name;
+    lab.appendChild(cb); lab.appendChild(span);
+    lab.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    menu.appendChild(lab);
+  });
+  document.body.appendChild(menu);
+  positionMenuAnchor(menu, anchor);
+  openMenu = 'skills';
+}
+
+var browserPath = '';
+var browserMenuEl = null;
+function openAttachBrowser(){
+  closeAllMenus();
+  var anchor = byId('attachBtn');
+  var menu = document.createElement('div'); menu.className = 'menu browser'; menu.dataset.level = 1;
+  browserMenuEl = menu;
+  document.body.appendChild(menu);
+  positionMenuAnchor(menu, anchor);
+  openMenu = 'attach';
+  browserPath = '';
+  renderBrowserLoading();
+  post({ type: 'listWorkspace', path: '' });
+}
+function renderBrowserLoading(){
+  if(!browserMenuEl) return;
+  browserMenuEl.innerHTML = '';
+  var head = document.createElement('div'); head.className = 'head';
+  head.appendChild(document.createTextNode('Carregando...'));
+  browserMenuEl.appendChild(head);
+}
+function fmtSize(n){ if(n>=1048576) return (n/1048576).toFixed(1)+'MB'; if(n>=1024) return (n/1024).toFixed(1)+'KB'; return n+'B'; }
+function renderBrowser(payload){
+  if(!browserMenuEl || openMenu !== 'attach') return;
+  var menu = browserMenuEl;
+  menu.innerHTML = '';
+  var head = document.createElement('div'); head.className = 'head';
+  var crumbs = document.createElement('span'); crumbs.style.flex = '1'; crumbs.style.overflow = 'hidden'; crumbs.style.textOverflow = 'ellipsis'; crumbs.style.whiteSpace = 'nowrap';
+  var parts = (payload.path || '').split('/').filter(Boolean);
+  var cum = '';
+  function crumb(label, p){
+    var a = document.createElement('a'); a.textContent = label; a.style.color = 'var(--accent)'; a.style.cursor = 'pointer'; a.style.marginRight = '4px';
+    a.addEventListener('click', function(ev){ ev.stopPropagation(); browserPath = p; renderBrowserLoading(); post({ type: 'listWorkspace', path: p }); });
+    crumbs.appendChild(a);
+  }
+  crumb('/', '');
+  parts.forEach(function(p, i){ cum = cum ? cum + '/' + p : p; var sep = document.createElement('span'); sep.textContent = '/ '; sep.style.color = 'var(--muted)'; crumbs.appendChild(sep); crumb(p, cum); });
+  head.appendChild(crumbs);
+  if(payload.path){
+    var attachAll = document.createElement('button'); attachAll.textContent = '+ pasta'; attachAll.title = 'Anexar pasta inteira';
+    attachAll.addEventListener('click', function(ev){ ev.stopPropagation(); post({ type: 'attachFolder', path: payload.path }); closeAllMenus(); });
+    head.appendChild(attachAll);
+  }
+  var disk = document.createElement('button'); disk.textContent = 'disco...'; disk.title = 'Anexar arquivos do disco (fora do workspace)';
+  disk.addEventListener('click', function(ev){ ev.stopPropagation(); closeAllMenus(); post({ type: 'attachFiles' }); });
+  head.appendChild(disk);
+  menu.appendChild(head);
+
+  if(payload.error){ var e = document.createElement('div'); e.className = 'empty'; e.textContent = payload.error; menu.appendChild(e); return; }
+  var entries = payload.entries || [];
+  if(payload.path){
+    var up = document.createElement('div'); up.className = 'item';
+    up.innerHTML = ICONS.caret + '<span style="margin-left:6px">..</span>';
+    up.addEventListener('click', function(ev){ ev.stopPropagation(); var newP = parts.slice(0, parts.length - 1).join('/'); browserPath = newP; renderBrowserLoading(); post({ type: 'listWorkspace', path: newP }); });
+    menu.appendChild(up);
+  }
+  if(!entries.length){ var em = document.createElement('div'); em.className = 'empty'; em.textContent = 'Pasta vazia.'; menu.appendChild(em); return; }
+  entries.forEach(function(e){
+    var row = document.createElement('div'); row.className = 'item browserItem';
+    var left = document.createElement('span'); left.style.display = 'inline-flex'; left.style.alignItems = 'center'; left.style.gap = '6px'; left.style.overflow = 'hidden';
+    left.innerHTML = (e.isDir ? ICONS.folder : ICONS.file) + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + e.name + '</span>';
+    var right = document.createElement('span'); right.style.display = 'inline-flex'; right.style.alignItems = 'center'; right.style.gap = '6px';
+    var fullPath = (payload.path ? payload.path + '/' : '') + e.name;
+    if(e.isDir){
+      var addBtn = document.createElement('button'); addBtn.textContent = '+'; addBtn.title = 'Anexar pasta'; addBtn.className = 'rowBtn';
+      addBtn.addEventListener('click', function(ev){ ev.stopPropagation(); post({ type: 'attachFolder', path: fullPath }); closeAllMenus(); });
+      right.appendChild(addBtn);
+      row.addEventListener('click', function(ev){ ev.stopPropagation(); browserPath = fullPath; renderBrowserLoading(); post({ type: 'listWorkspace', path: fullPath }); });
+    } else {
+      var sz = document.createElement('span'); sz.style.color = 'var(--muted)'; sz.style.fontSize = '10px'; sz.textContent = fmtSize(e.size || 0);
+      right.appendChild(sz);
+      row.addEventListener('click', function(ev){ ev.stopPropagation(); post({ type: 'attachWorkspacePath', path: fullPath }); closeAllMenus(); });
+    }
+    row.appendChild(left); row.appendChild(right);
+    menu.appendChild(row);
+  });
+  if(pendingSelection){
+    var hr = document.createElement('div'); hr.className = 'head'; hr.textContent = 'Sugerido';
+    menu.appendChild(hr);
+    var sel = document.createElement('div'); sel.className = 'item';
+    sel.innerHTML = ICONS.paperclip + '<span style="margin-left:6px">' + pendingSelection.label + '</span>';
+    sel.addEventListener('click', function(ev){ ev.stopPropagation(); attachedItems.push(pendingSelection); pendingSelection = null; renderContextChips(); updateTokens(); closeAllMenus(); });
+    menu.appendChild(sel);
+  }
+}
+
+function action(name, element){
+  if(name === 'send') return sendPrompt(getPrompt());
+  if(name === 'newChat'){ post({ type: 'newChat' }); return; }
+  if(name === 'terminal') return post({ type: 'terminal', text: getPrompt() });
+  if(name === 'refreshModels') return post({ type: 'refreshModels' });
+  if(name === 'review'){ setBusy(true); return post({ type: 'review' }); }
+  if(name === 'selection'){ setBusy(true); return post({ type: 'selection' }); }
+  if(name === 'starter') return sendPrompt(element.getAttribute('data-prompt') || '');
+  if(name === 'toggleHistory'){ if(togglePanel('historyPanel')) post({ type: 'getHistory' }); return; }
+  if(name === 'openSkillsMenu') return openSkillsMenu();
+  if(name === 'clearHistory'){ if(confirm('Limpar todo o historico?')) post({ type: 'clearHistory' }); return; }
+  if(name === 'openModelMenu') return openModelMenu();
+  if(name === 'openAgentMenu') return openAgentMenu();
+  if(name === 'openModeMenu') return openModeMenu();
+  if(name === 'attachMenu') return post({ type: 'attachMenu' });
+}
+
+document.addEventListener('click', function(e){
+  var b = e.target && e.target.closest ? e.target.closest('[data-action]') : null;
+  if(!b){ if(!e.target.closest('.menu')) closeAllMenus(); return; }
+  e.preventDefault();
+  closeAllMenus();
+  try { action(b.getAttribute('data-action'), b); } catch(err){}
+});
+
+var pe = byId('prompt');
+if(pe){
+  pe.addEventListener('keydown', function(ev){ if(ev.key === 'Enter' && !ev.shiftKey){ ev.preventDefault(); sendPrompt(getPrompt()); } });
+  pe.addEventListener('input', updateTokens);
+}
+
+function applyResponsive(){
+  var w = window.innerWidth;
+  document.body.classList.toggle('narrow', w < 520);
+}
+window.addEventListener('resize', applyResponsive);
+applyResponsive();
+
+window.addEventListener('message', function(ev){
+  var m = ev.data || {};
+  if(m.type === 'meta'){
+    META.skills = m.skills || []; META.selectedSkills = m.selectedSkills || [];
+    META.modelLocked = !!m.modelLocked; META.hasMessages = !!m.hasMessages;
+    META.model = m.model || 'auto'; META.agent = m.agent || 'auto'; META.mode = m.mode || 'resposta-integrada';
+    META.agents = m.agents || ['auto'];
+    META.tokensTotal = m.tokensTotal || 0; META.tokensIn = m.tokensIn || 0; META.tokensOut = m.tokensOut || 0;
+    META.recentSessions = m.recentSessions || [];
+
+    var modelChip = byId('modelChip');
+    var modelText = byId('modelChipText');
+    if(modelText) modelText.textContent = META.model || 'Modelo';
+    if(modelChip){ modelChip.disabled = false; modelChip.classList.toggle('has', !!META.model); }
+    var agentText = byId('agentChipText'); if(agentText) agentText.textContent = META.agent === 'auto' ? 'Agente' : META.agent;
+    var agentChip = byId('agentChip'); if(agentChip) agentChip.classList.toggle('has', META.agent !== 'auto');
+    var modeText = byId('modeChipText'); if(modeText) modeText.textContent = META.mode === 'terminal' ? 'Terminal' : 'Integrado';
+    var c = byId('skillsCount'); if(c) c.textContent = (META.selectedSkills || []).length;
+    var sb = byId('skillsBtn'); if(sb) sb.classList.toggle('has', (META.selectedSkills || []).length > 0);
+
+    if(openMenu === 'skills'){ openSkillsMenu(); }
+    renderRecent();
+    updateGate(); updateTokens();
+  }
+  if(m.type === 'message') addMessage(m.role || 'assistant', m.text || '');
+  if(m.type === 'busy') setBusy(!!m.value);
+  if(m.type === 'insertPrompt') appendPrompt(m.text || '');
+  if(m.type === 'history') renderHistory(m.sessions || []);
+  if(m.type === 'clearThread') clearMessages();
+  if(m.type === 'selectionAvailable'){ pendingSelection = m.selection || null; renderContextChips(); updateTokens(); }
+  if(m.type === 'attachItems'){
+    var arr = m.items || [];
+    for(var i=0;i<arr.length;i++) attachedItems.push(arr[i]);
+    renderContextChips(); updateTokens();
+  }
+  if(m.type === 'workspaceList'){ renderBrowser(m); }
+});
+
+setBusy(false); updateTokens(); renderContextChips();
+post({ type: 'ready' });
 })();
 </script></body></html>`;
   }
 }
 
 async function activate(context) {
+  extContext = context;
   provider = new ChatViewProvider(context);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider('devinCliChat.chatView', provider, { webviewOptions: { retainContextWhenHidden: true } }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.abrirPainel', async () => vscode.commands.executeCommand('workbench.view.extension.devinCliChat')));
@@ -1033,27 +1628,44 @@ async function activate(context) {
   }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarModelo', pickModel));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.definirModeloManual', pickManualModel));
-  context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.atualizarModelos', () => {
+  context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.atualizarModelos', async () => {
     if (provider) provider.refreshMeta();
-    vscode.window.showInformationMessage('Modelos atualizados a partir dos arquivos locais.');
+    const extra = await discoverModelsFromCli();
+    if (extra.length) {
+      const merged = Array.from(new Set([...(cfg().get('modelosDisponiveis') || []), ...extra]));
+      await cfg().update('modelosDisponiveis', merged, vscode.ConfigurationTarget.Workspace);
+    }
+    if (provider) provider.refreshMeta();
+    vscode.window.showInformationMessage(`Modelos atualizados (${modelsForUi().length} disponiveis).`);
   }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarAgente', async () => {
     const pick = await vscode.window.showQuickPick(scanAgents(), { placeHolder: 'Selecione o agente Devin' });
     if (pick) await setConfig('agenteAtual', pick);
   }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarSkills', pickSkills));
-  context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.anexarArquivos', async () => {
-    await vscode.commands.executeCommand('workbench.view.extension.devinCliChat');
-    if (provider) await provider.attachFiles();
+  context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarModo', async () => {
+    const pick = await vscode.window.showQuickPick([
+      { label: 'Integrado (resposta no chat)', value: 'resposta-integrada' },
+      { label: 'Terminal', value: 'terminal' }
+    ], { placeHolder: 'Selecione o modo de execucao' });
+    if (pick) await setConfig('modoExecucaoChat', pick.value);
   }));
-  context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.limparAnexos', async () => {
-    if (provider) provider.clearAttachments();
+  context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.limparHistorico', async () => {
+    const ok = await vscode.window.showWarningMessage('Limpar todo o historico de chats?', { modal: true }, 'Limpar');
+    if (ok === 'Limpar') { await saveHistory([]); if (provider) provider.post({ type: 'history', sessions: [] }); }
   }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.verificarCli', () => {
     cp.execFile(devinPath(), ['--version'], { cwd: defaultCwd(), windowsHide: true }, (err, stdout, stderr) => {
       vscode.window.showInformationMessage(err ? `Falha ao verificar Devin CLI: ${err.message}` : `Devin CLI encontrado: ${(stdout || stderr || 'ok').trim()}`);
     });
   }));
+  let selectionTimer;
+  const fireSelection = () => {
+    if (selectionTimer) clearTimeout(selectionTimer);
+    selectionTimer = setTimeout(() => { if (provider) provider.pushCurrentSelection(true); }, 150);
+  };
+  context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(fireSelection));
+  context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(fireSelection));
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration(EXT)) {
       updateStatusBar();
@@ -1068,15 +1680,5 @@ function deactivate() {}
 module.exports = {
   activate,
   deactivate,
-  _internal: {
-    baseArgs,
-    fullPrompt,
-    runIntegrated,
-    modelsForUi,
-    scanAgents,
-    scanSkills,
-    scanAgentEntries,
-    scanSkillEntries,
-    readTextLimited
-  }
+  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, loadHistory, saveHistory }
 };

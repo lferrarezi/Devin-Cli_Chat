@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.lferrarezi"
-version = "1.0.1"
+version = "0.31.0"
 
 kotlin {
     jvmToolchain(17)

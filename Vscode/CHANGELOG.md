@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.30.0
+
+- Evolui o botao **Historico** do painel VS Code para persistir a sessao atual antes de abrir a lista.
+- Adiciona acoes explicitas para carregar, excluir com confirmacao e limpar todo o historico.
+- Ao excluir a sessao aberta ou limpar o historico, o chat reseta a conversa atual para evitar estado inconsistente.
+- Adiciona o comando **Devin Cli Chat: Abrir historico** na Command Palette.
+- Mantem `out/extension.js` sincronizado com `src/extension.ts` para o pacote VSIX carregar a implementacao atual.
+
 ## 0.29.0
 
 - Consolida o contrato real de modelos aceito pelo Devin CLI: `auto`, `sonnet`, `opus`, `swe`, `gpt`.

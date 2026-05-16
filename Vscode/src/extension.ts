@@ -538,7 +538,7 @@ class ChatViewProvider {
         }
         if (type === 'insertSelection') { this.post({ type: 'insertPrompt', text: 'Analise o contexto do editor atual.\n\n' + activeContext() }); return; }
         if (type === 'newChat') { await this.persistSession(); this.session = this.newSession(); this.post({ type: 'clearThread' }); this.refreshMeta(); return; }
-        if (type === 'getHistory') { this.post({ type: 'history', sessions: loadHistory() }); return; }
+        if (type === 'getHistory') { await this.openHistory(); return; }
         if (type === 'loadSession') {
           await this.persistSession();
           const all = loadHistory();
@@ -555,12 +555,20 @@ class ChatViewProvider {
         if (type === 'deleteSession') {
           const all = loadHistory().filter(s => s.id !== message.id);
           await saveHistory(all);
+          if (this.session && this.session.id === message.id) {
+            this.session = this.newSession();
+            this.post({ type: 'clearThread' });
+          }
           this.post({ type: 'history', sessions: all });
+          this.refreshMeta();
           return;
         }
         if (type === 'clearHistory') {
           await saveHistory([]);
+          this.session = this.newSession();
+          this.post({ type: 'clearThread' });
           this.post({ type: 'history', sessions: [] });
+          this.refreshMeta();
           return;
         }
         this.post({ type: 'action', ok: false, text: `Acao desconhecida: ${type}` });
@@ -575,6 +583,13 @@ class ChatViewProvider {
   }
 
   post(message) { try { if (this.view) this.view.webview.postMessage(message); } catch (_) {} }
+
+  async openHistory() {
+    await this.persistSession();
+    const sessions = loadHistory().filter(s => s && s.messages && s.messages.length);
+    this.post({ type: 'openHistory', sessions });
+    this.refreshMeta();
+  }
 
   pushCurrentSelection(force) {
     const editor = vscode.window.activeTextEditor;
@@ -1035,8 +1050,9 @@ textarea{width:100%;min-height:62px;max-height:200px;resize:none;background:tran
 .histItem:hover{background:var(--hover)}
 .histItem .t{font-size:12px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .histItem .m{font-size:10px;color:var(--muted);display:flex;justify-content:space-between;gap:6px}
-.histItem .del{margin-left:auto;border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:11px}
-.histItem .del:hover{color:var(--fg)}
+.histItem .actions{display:flex;gap:4px;justify-content:flex-end;margin-top:4px}
+.histItem .actions button{border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:10px;border-radius:4px;padding:2px 6px}
+.histItem .actions button:hover{color:var(--fg);background:var(--hover)}
 .menu{position:absolute;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 22px rgba(0,0,0,.4);z-index:40;min-width:200px;max-height:55vh;overflow:auto;padding:4px 0;font-size:12px}
 .menu .item{display:flex;align-items:center;gap:6px;padding:5px 12px;cursor:pointer;justify-content:space-between;white-space:nowrap}
 .menu .item:hover,.menu .item.activeHover{background:var(--hover)}
@@ -1304,12 +1320,19 @@ function renderHistory(sessions){
     var t = document.createElement('div'); t.className = 't'; t.textContent = s.title || s.id;
     var m = document.createElement('div'); m.className = 'm';
     var when = new Date(s.updatedAt || s.createdAt || Date.now());
-    var info = document.createElement('span'); info.textContent = (s.messages||[]).length + ' msgs - ' + when.toLocaleString();
-    var del = document.createElement('button'); del.className = 'del'; del.textContent = 'X'; del.title = 'Excluir';
-    del.addEventListener('click', function(e){ e.stopPropagation(); post({ type: 'deleteSession', id: s.id }); });
-    m.appendChild(info); m.appendChild(del);
-    div.appendChild(t); div.appendChild(m);
-    div.addEventListener('click', function(){ post({ type: 'loadSession', id: s.id }); byId('historyPanel').classList.remove('open'); });
+    var info = document.createElement('span'); info.textContent = (s.messages||[]).length + ' msgs - ' + (s.model || 'auto') + ' - ' + when.toLocaleString();
+    m.appendChild(info);
+    var actions = document.createElement('div'); actions.className = 'actions';
+    var load = document.createElement('button'); load.type = 'button'; load.textContent = 'Carregar';
+    var del = document.createElement('button'); del.type = 'button'; del.textContent = 'Excluir';
+    load.addEventListener('click', function(e){ e.stopPropagation(); post({ type: 'loadSession', id: s.id }); byId('historyPanel').classList.remove('open'); });
+    del.addEventListener('click', function(e){
+      e.stopPropagation();
+      if(confirm('Excluir esta conversa do historico?')) post({ type: 'deleteSession', id: s.id });
+    });
+    actions.appendChild(load); actions.appendChild(del);
+    div.appendChild(t); div.appendChild(m); div.appendChild(actions);
+    div.addEventListener('dblclick', function(){ post({ type: 'loadSession', id: s.id }); byId('historyPanel').classList.remove('open'); });
     list.appendChild(div);
   });
 }
@@ -1595,6 +1618,7 @@ window.addEventListener('message', function(ev){
   if(m.type === 'busy') setBusy(!!m.value);
   if(m.type === 'insertPrompt') appendPrompt(m.text || '');
   if(m.type === 'history') renderHistory(m.sessions || []);
+  if(m.type === 'openHistory'){ renderHistory(m.sessions || []); var hp = byId('historyPanel'); if(hp) hp.classList.add('open'); }
   if(m.type === 'clearThread') clearMessages();
   if(m.type === 'selectionAvailable'){ pendingSelection = m.selection || null; renderContextChips(); updateTokens(); }
   if(m.type === 'attachItems'){
@@ -1617,6 +1641,10 @@ async function activate(context) {
   provider = new ChatViewProvider(context);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider('devinCliChat.chatView', provider, { webviewOptions: { retainContextWhenHidden: true } }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.abrirPainel', async () => vscode.commands.executeCommand('workbench.view.extension.devinCliChat')));
+  context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.abrirHistorico', async () => {
+    await vscode.commands.executeCommand('workbench.view.extension.devinCliChat');
+    setTimeout(() => { if (provider) provider.openHistory(); }, 100);
+  }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.novaSessao', () => openTerminal('')));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.revisarDiff', async () => {
     await vscode.commands.executeCommand('workbench.view.extension.devinCliChat');

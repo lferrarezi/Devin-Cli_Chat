@@ -2,13 +2,15 @@
 
 Tela propria de chat para usar o Devin CLI dentro do VS Code.
 
-## Versao 0.29.0
+## Versao 0.30.0
 
-Esta versao consolida o contrato operacional iniciado nas releases 0.26-0.28:
+Esta versao adiciona a evolucao do Historico e mantem o contrato operacional consolidado nas releases 0.26-0.29:
 
 - modelos reais do CLI: `auto`, `sonnet`, `opus`, `swe`, `gpt`;
 - seletor de modelo sempre clicavel;
 - `auto` tratado como modelo valido;
+- botao **Historico** com carregar, excluir e limpar conversas;
+- comando **Devin Cli Chat: Abrir historico** na Command Palette;
 - anexos exibidos no chat como referencias compactas;
 - conteudo completo enviado ao Devin CLI via `fullText`;
 - pasta anexada como chip unico `pasta (N)`;
@@ -37,7 +39,7 @@ Esta versao consolida o contrato operacional iniciado nas releases 0.26-0.28:
 
 ## Modelos validos
 
-A versao 0.29.0 sanitiza qualquer modelo legado ou invalido para `auto` antes de invocar o CLI.
+A versao 0.30.0 sanitiza qualquer modelo legado ou invalido para `auto` antes de invocar o CLI.
 
 Aliases aceitos:
 

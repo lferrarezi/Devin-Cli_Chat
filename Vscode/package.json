@@ -2,7 +2,7 @@
 	"name": "devin-cli-chat",
 	"displayName": "Devin Cli Chat",
 	"description": "Tela propria de chat para Devin CLI no VS Code, em portugues brasileiro, com contexto compacto, aliases reais do CLI e anexos resilientes.",
-	"version": "0.29.0",
+	"version": "0.30.0",
 	"publisher": "luiz-alberto-abarca-ferrarezi",
 	"author": {
 		"name": "Luiz Alberto Abarca Ferrarezi"
@@ -28,6 +28,7 @@
 	"activationEvents": [
 		"onView:devinCliChat.chatView",
 		"onCommand:devinCliChat.abrirPainel",
+		"onCommand:devinCliChat.abrirHistorico",
 		"onCommand:devinCliChat.novaSessao",
 		"onCommand:devinCliChat.enviarSelecao",
 		"onCommand:devinCliChat.revisarDiff",
@@ -65,6 +66,12 @@
 				"title": "Devin Cli Chat: Abrir chat",
 				"category": "Devin Cli Chat",
 				"icon": "$(comment-discussion)"
+			},
+			{
+				"command": "devinCliChat.abrirHistorico",
+				"title": "Devin Cli Chat: Abrir historico",
+				"category": "Devin Cli Chat",
+				"icon": "$(history)"
 			},
 			{
 				"command": "devinCliChat.novaSessao",
@@ -129,6 +136,9 @@
 			"commandPalette": [
 				{
 					"command": "devinCliChat.abrirPainel"
+				},
+				{
+					"command": "devinCliChat.abrirHistorico"
 				},
 				{
 					"command": "devinCliChat.novaSessao"
@@ -197,7 +207,7 @@
 						"type": "string"
 					},
 					"default": [],
-					"description": "Modelos manuais de fallback. A versao 0.29.0 sanitiza todos os valores para os aliases reais aceitos pelo Devin CLI: auto, sonnet, opus, swe, gpt."
+					"description": "Modelos manuais de fallback. A versao 0.30.0 sanitiza todos os valores para os aliases reais aceitos pelo Devin CLI: auto, sonnet, opus, swe, gpt."
 				},
 				"devinCliChat.modeloAtual": {
 					"type": "string",

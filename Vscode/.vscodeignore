@@ -1,0 +1,5 @@
+**/.DS_Store
+**/*.vsix
+_old/**
+source/**
+VERSION_0.29_ANALISE.md

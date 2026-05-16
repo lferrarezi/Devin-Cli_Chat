@@ -1,0 +1,139 @@
+<idea-plugin>
+  <id>com.lferrarezi.devinclichat</id>
+  <name>Devin Cli Chat</name>
+  <version>1.0.0</version>
+
+  <vendor email="lferrarezi@gmail.com" url="https://github.com/lferrarezi">
+    Luiz Alberto Abarca Ferrarezi
+  </vendor>
+
+  <description><![CDATA[
+    Painel de chat nativo para o <b>Devin CLI</b> no PyCharm e IDEs JetBrains.<br/><br/>
+    Suporta modelos (<code>auto</code>, <code>sonnet</code>, <code>opus</code>, <code>swe</code>, <code>gpt</code>),
+    agentes <code>AGENT.md</code>, skills <code>SKILL.md</code>, anexo de arquivos e pastas,
+    revisão de git diff, menções <code>@agente</code> e <code>#skill</code> no prompt,
+    modo integrado e modo terminal. Interface em português brasileiro.<br/><br/>
+    Paridade total com a extensão VSCode Devin Cli Chat v0.29.0.
+  ]]></description>
+
+  <change-notes><![CDATA[
+    <b>1.0.0</b> — Release inicial. Paridade total com a extensão VSCode v0.29.0.
+  ]]></change-notes>
+
+  <idea-version since-build="223" until-build="253.*"/>
+
+  <depends>com.intellij.modules.platform</depends>
+
+  <extensions defaultExtensionNs="com.intellij">
+
+    <toolWindow
+      id="DevinCliChat"
+      anchor="left"
+      secondary="false"
+      icon="/icons/devinCliChat.svg"
+      factoryClass="com.lferrarezi.devinclichat.ui.ChatToolWindowFactory"/>
+
+    <applicationService
+      serviceImplementation="com.lferrarezi.devinclichat.settings.DevinSettings"/>
+
+    <projectService
+      serviceImplementation="com.lferrarezi.devinclichat.state.ChatHistoryState"/>
+
+    <statusBarWidgetFactory
+      id="DevinCliChatStatus"
+      implementation="com.lferrarezi.devinclichat.statusbar.DevinStatusBarWidgetFactory"
+      order="after writeActionStatusBarWidgetFactory"/>
+
+    <applicationConfigurable
+      parentId="tools"
+      instance="com.lferrarezi.devinclichat.settings.DevinSettingsConfigurable"
+      id="com.lferrarezi.devinclichat.settings"
+      displayName="Devin Cli Chat"/>
+
+  </extensions>
+
+  <actions>
+    <group id="DevinCliChat.MainGroup" text="Devin Cli Chat" popup="true">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+    </group>
+
+    <action id="DevinCliChat.AbrirPainel"
+      class="com.lferrarezi.devinclichat.actions.AbrirPainelAction"
+      text="Abrir Chat"
+      description="Abre o painel de chat do Devin Cli Chat">
+      <add-to-group group-id="DevinCliChat.MainGroup" anchor="first"/>
+    </action>
+
+    <action id="DevinCliChat.NovaSessao"
+      class="com.lferrarezi.devinclichat.actions.NovaSessaoAction"
+      text="Nova Sessão Devin no Workspace"
+      description="Abre terminal integrado com sessão Devin">
+      <add-to-group group-id="DevinCliChat.MainGroup" anchor="last"/>
+    </action>
+
+    <action id="DevinCliChat.EnviarSelecao"
+      class="com.lferrarezi.devinclichat.actions.EnviarSelecaoAction"
+      text="Enviar Seleção para o Chat Devin"
+      description="Envia o texto selecionado no editor para o chat">
+      <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+      <add-to-group group-id="DevinCliChat.MainGroup" anchor="last"/>
+    </action>
+
+    <action id="DevinCliChat.RevisarDiff"
+      class="com.lferrarezi.devinclichat.actions.RevisarDiffAction"
+      text="Revisar Git Diff com Devin"
+      description="Executa git diff e envia para revisão no chat">
+      <add-to-group group-id="Vcs.MessageActionGroup" anchor="last"/>
+      <add-to-group group-id="DevinCliChat.MainGroup" anchor="last"/>
+    </action>
+
+    <action id="DevinCliChat.SelecionarModelo"
+      class="com.lferrarezi.devinclichat.actions.SelecionarModeloAction"
+      text="Selecionar Modelo" description="Seleciona o modelo Devin CLI">
+      <add-to-group group-id="DevinCliChat.MainGroup" anchor="last"/>
+    </action>
+
+    <action id="DevinCliChat.SelecionarAgente"
+      class="com.lferrarezi.devinclichat.actions.SelecionarAgenteAction"
+      text="Selecionar Agente" description="Seleciona o agente Devin">
+      <add-to-group group-id="DevinCliChat.MainGroup" anchor="last"/>
+    </action>
+
+    <action id="DevinCliChat.AtualizarModelos"
+      class="com.lferrarezi.devinclichat.actions.AtualizarModelosAction"
+      text="Atualizar Modelos" description="Atualiza modelos a partir dos arquivos locais">
+      <add-to-group group-id="DevinCliChat.MainGroup" anchor="last"/>
+    </action>
+
+    <action id="DevinCliChat.DefinirModeloManual"
+      class="com.lferrarezi.devinclichat.actions.DefinirModeloManualAction"
+      text="Definir Modelo Manual" description="Informa manualmente o nome do modelo">
+      <add-to-group group-id="DevinCliChat.MainGroup" anchor="last"/>
+    </action>
+
+    <action id="DevinCliChat.VerificarCli"
+      class="com.lferrarezi.devinclichat.actions.VerificarCliAction"
+      text="Verificar Devin CLI" description="Verifica se o Devin CLI está acessível">
+      <add-to-group group-id="DevinCliChat.MainGroup" anchor="last"/>
+    </action>
+
+    <action id="DevinCliChat.AnexarArquivos"
+      class="com.lferrarezi.devinclichat.actions.AnexarArquivosAction"
+      text="Anexar Arquivos" description="Anexa arquivos ou pastas ao chat">
+      <add-to-group group-id="DevinCliChat.MainGroup" anchor="last"/>
+    </action>
+
+    <action id="DevinCliChat.LimparAnexos"
+      class="com.lferrarezi.devinclichat.actions.LimparAnexosAction"
+      text="Limpar Anexos" description="Remove todos os anexos do chat">
+      <add-to-group group-id="DevinCliChat.MainGroup" anchor="last"/>
+    </action>
+
+    <action id="DevinCliChat.SelecionarSkills"
+      class="com.lferrarezi.devinclichat.actions.SelecionarSkillsAction"
+      text="Selecionar Skills" description="Seleciona skills Markdown para o prompt">
+      <add-to-group group-id="DevinCliChat.MainGroup" anchor="last"/>
+    </action>
+  </actions>
+
+</idea-plugin>

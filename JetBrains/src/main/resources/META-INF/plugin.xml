@@ -1,7 +1,7 @@
 <idea-plugin>
   <id>com.lferrarezi.devinclichat</id>
   <name>Devin Cli Chat</name>
-  <version>0.31.0</version>
+  <version>0.32.0</version>
 
   <vendor email="lferrarezi@gmail.com" url="https://github.com/lferrarezi">
     Luiz Alberto Abarca Ferrarezi
@@ -17,7 +17,8 @@
   ]]></description>
 
   <change-notes><![CDATA[
-    <b>0.31.0</b> — Alinhamento de versão com a extensão VSCode. Correções: scroll do chat, rendering de blocos de código, metadados de sessão salvos/restaurados no histórico, modality do dialog de histórico, flag -p no modo terminal.
+    <b>0.32.0</b> — Licença Apache 2.0, arquivo NOTICE, alinhamento de versão VSCode/JetBrains.
+    <br/><b>0.31.0</b> — Alinhamento de versão com a extensão VSCode. Correções: scroll do chat, rendering de blocos de código, metadados de sessão salvos/restaurados no histórico, modality do dialog de histórico, flag -p no modo terminal.
     <br/><b>0.30.0</b> — Release inicial JetBrains. Paridade total com a extensão VSCode v0.29.0.
   ]]></change-notes>
 

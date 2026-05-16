@@ -4,6 +4,7 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.CapturingProcessHandler
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.wm.ToolWindowManager
 import com.lferrarezi.devinclichat.prompt.AttachmentItem
 import com.lferrarezi.devinclichat.prompt.PromptBuilder
 import com.lferrarezi.devinclichat.settings.DevinSettings
@@ -62,7 +63,7 @@ object DevinRunner {
         val fullCmd = buildString {
             append(shellQuote(s.caminhoDevin))
             if (baseArgs.isNotEmpty()) append(" ${baseArgs.joinToString(" ") { shellQuote(it) }}")
-            if (result.fullText.isNotBlank()) append(" -- ${shellQuote(result.fullText)}")
+            if (result.fullText.isNotBlank()) append(" -p -- ${shellQuote(result.fullText)}")
         }
         openSystemTerminal(project, fullCmd)
     }
@@ -88,13 +89,7 @@ object DevinRunner {
 
     private fun openSystemTerminal(project: Project, command: String) {
         try {
-            val cls = Class.forName("com.intellij.openapi.wm.ToolWindowManager")
-            val twm = cls.getMethod("getInstance", Project::class.java).invoke(null, project)
-            val tw = cls.getMethod("getToolWindow", String::class.java).invoke(twm, "Terminal")
-            tw?.let {
-                val showMethod = it.javaClass.getMethod("show", Runnable::class.java)
-                showMethod.invoke(it, null)
-            }
+            ToolWindowManager.getInstance(project).getToolWindow("Terminal")?.show(null)
         } catch (_: Exception) {}
 
         ApplicationManager.getApplication().executeOnPooledThread {

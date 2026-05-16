@@ -15,8 +15,9 @@ object MessageRenderer {
         val sb = StringBuilder()
         sb.append("""<html><body style="font-family:sans-serif;font-size:12px;color:$fgHex;margin:0;padding:0;">""")
 
+        // Split on ``` fences; language tag is consumed by the regex and not returned.
+        // Even-indexed parts are plain text, odd-indexed parts are code block content.
         val parts = text.split(Regex("```([a-zA-Z0-9]*)\n?"))
-        var inCode = false
         for ((i, part) in parts.withIndex()) {
             if (i % 2 == 0) {
                 val escaped = part.htmlEscape()
@@ -24,14 +25,9 @@ object MessageRenderer {
                     .replace("  ", "&nbsp;&nbsp;")
                 if (escaped.isNotBlank()) sb.append(escaped)
             } else {
-                val lang = if (i == 1 && part.lines().first().run { isNotBlank() && !contains(' ') }) {
-                    part.lines().first()
-                } else ""
-                val code = if (lang.isNotBlank()) part.lines().drop(1).joinToString("\n") else part
                 sb.append("""<pre style="background:$codeBg;color:$codeFg;padding:8px 10px;border-radius:4px;margin:4px 0;overflow:auto;font-family:monospace;font-size:11px;"><code>""")
-                sb.append(code.htmlEscape())
+                sb.append(part.htmlEscape())
                 sb.append("</code></pre>")
-                inCode = !inCode
             }
         }
         sb.append("</body></html>")

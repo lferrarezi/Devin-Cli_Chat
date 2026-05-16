@@ -102,6 +102,6 @@ object AttachmentReader {
         else -> ext.ifBlank { "text" }
     }
 
-    private var counter = 0L
-    private fun nextId(): String = "${System.currentTimeMillis().toString(36)}-${counter++}"
+    private val counter = java.util.concurrent.atomic.AtomicLong(0)
+    private fun nextId(): String = "${System.currentTimeMillis().toString(36)}-${counter.getAndIncrement()}"
 }

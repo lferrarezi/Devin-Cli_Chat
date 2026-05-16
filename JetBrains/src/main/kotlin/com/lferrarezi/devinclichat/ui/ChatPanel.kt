@@ -1,11 +1,7 @@
 package com.lferrarezi.devinclichat.ui
 
-import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.openapi.fileEditor.FileEditorManagerEvent
-import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
@@ -63,7 +59,6 @@ class ChatPanel(val project: Project) : JPanel(BorderLayout()) {
         }
 
         refreshMeta()
-        setupEditorListener()
     }
 
     private fun buildHeader(): JPanel {
@@ -112,9 +107,17 @@ class ChatPanel(val project: Project) : JPanel(BorderLayout()) {
 
     fun handleSend(text: String) {
         if (busy) { composerPanel.setStatus("Aguarde a resposta atual."); return }
-        val mode = DevinSettings.getInstance().state.modoExecucaoChat
+        val s = DevinSettings.getInstance().state
+        val mode = s.modoExecucaoChat
+        val history = ChatHistoryState.getInstance(project)
         threadPanel.addMessage("user", text)
-        ChatHistoryState.getInstance(project).addMessage("user", text)
+        history.addMessage("user", text)
+        history.updateCurrentSessionMeta(
+            model = com.lferrarezi.devinclichat.model.ModelManager.sanitizeModel(s.modeloAtual),
+            agent = s.agenteAtual,
+            mode = mode,
+            skills = s.skillsSelecionadas.toList()
+        )
         if (mode == "terminal") {
             DevinRunner.openTerminal(project, text, attachments.toList())
             threadPanel.addMessage("assistant", "Sessão aberta no terminal integrado com o contexto do workspace.")
@@ -124,7 +127,7 @@ class ChatPanel(val project: Project) : JPanel(BorderLayout()) {
         composerPanel.setStatus("Enviando para o Devin CLI...")
         DevinRunner.runIntegrated(project, text, attachments.toList()) { response ->
             threadPanel.addMessage("assistant", response)
-            ChatHistoryState.getInstance(project).addMessage("assistant", response)
+            history.addMessage("assistant", response)
             setBusy(false)
             composerPanel.setStatus("pronto")
         }
@@ -177,7 +180,7 @@ class ChatPanel(val project: Project) : JPanel(BorderLayout()) {
         content.add(scroll, BorderLayout.CENTER)
         content.add(buttons, BorderLayout.SOUTH)
 
-        val dialog = JDialog(SwingUtilities.getWindowAncestor(this), "Historico", java.awt.Dialog.ModalityType.APPLICATION_MODAL)
+        val dialog = JDialog(SwingUtilities.getWindowAncestor(this), "Historico", java.awt.Dialog.ModalityType.DOCUMENT_MODAL)
         dialog.contentPane = content
         dialog.pack()
         dialog.setLocationRelativeTo(this)
@@ -222,6 +225,11 @@ class ChatPanel(val project: Project) : JPanel(BorderLayout()) {
 
     private fun loadHistorySession(session: ChatHistoryState.Session) {
         attachments.clear()
+        val s = DevinSettings.getInstance().state
+        if (session.model != "auto") s.modeloAtual = session.model
+        s.agenteAtual = session.agent
+        s.modoExecucaoChat = session.mode
+        s.skillsSelecionadas = session.skills.toMutableList()
         threadPanel.setMessages(session.messages.map { it.role to it.text })
         refreshMeta()
     }
@@ -276,16 +284,7 @@ class ChatPanel(val project: Project) : JPanel(BorderLayout()) {
         composerPanel.setBusy(value)
     }
 
-    private fun setupEditorListener() {
-        project.messageBus.connect().subscribe(
-            FileEditorManagerListener.FILE_EDITOR_MANAGER,
-            object : FileEditorManagerListener {
-                override fun selectionChanged(event: FileEditorManagerEvent) {}
-            }
-        )
-    }
-
-        companion object {
+    companion object {
         fun getInstance(project: Project): ChatPanel? {
             val tw = com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
                 .getToolWindow("DevinCliChat") ?: return null

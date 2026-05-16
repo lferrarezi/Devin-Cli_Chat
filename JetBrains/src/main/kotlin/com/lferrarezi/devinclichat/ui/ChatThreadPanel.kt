@@ -60,12 +60,9 @@ class ChatThreadPanel : JPanel() {
     }
 
     private fun scrollToBottom() {
-        val parent = parent
-        if (parent != null) {
-            val scrollPane = findScrollPane()
-            scrollPane?.verticalScrollBar?.let { vsb ->
-                vsb.value = vsb.maximum
-            }
+        // Defer until after the layout pass so verticalScrollBar.maximum is up-to-date
+        javax.swing.SwingUtilities.invokeLater {
+            findScrollPane()?.verticalScrollBar?.let { vsb -> vsb.value = vsb.maximum }
         }
     }
 
@@ -90,7 +87,9 @@ class ChatThreadPanel : JPanel() {
 
         if (isUser) {
             bubble.background = JBColor(Color(0xDCF8C6), Color(0x2D4A2D))
-            val lbl = JLabel(text)
+            val escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\n", "<br/>")
+            val lbl = JLabel("<html><body style='font-size:12pt'>$escaped</body></html>")
             lbl.font = lbl.font.deriveFont(12f)
             bubble.add(lbl, BorderLayout.CENTER)
             bubble.maximumSize = Dimension(480, Int.MAX_VALUE)

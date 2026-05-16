@@ -65,6 +65,14 @@ class ChatHistoryState : PersistentStateComponent<ChatHistoryState.State> {
         }
     }
 
+    fun updateCurrentSessionMeta(model: String, agent: String, mode: String, skills: List<String>) {
+        val session = currentSession()
+        session.model = model
+        session.agent = agent
+        session.mode = mode
+        session.skills = skills.toMutableList()
+    }
+
     fun sessionsNewestFirst(): List<Session> =
         myState.sessions.sortedByDescending { it.updatedAt }
 

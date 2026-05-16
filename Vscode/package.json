@@ -7,7 +7,7 @@
 	"author": {
 		"name": "Luiz Alberto Abarca Ferrarezi"
 	},
-	"license": "UNLICENSED",
+	"license": "Apache-2.0",
 	"engines": {
 		"vscode": "^1.92.0"
 	},

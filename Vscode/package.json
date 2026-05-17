@@ -2,7 +2,7 @@
 	"name": "devin-cli-chat",
 	"displayName": "Devin Cli Chat",
 	"description": "Tela propria de chat para Devin CLI no VS Code, em portugues brasileiro, com contexto compacto, aliases reais do CLI e anexos resilientes.",
-	"version": "0.33.0",
+	"version": "0.34.0",
 	"publisher": "luiz-alberto-abarca-ferrarezi",
 	"author": {
 		"name": "Luiz Alberto Abarca Ferrarezi"
@@ -11,11 +11,13 @@
 	"scripts": {
 		"compile": "tsc -p tsconfig.json",
 		"vscode:prepublish": "npm run compile",
-		"watch": "tsc -watch -p tsconfig.json"
+		"watch": "tsc -watch -p tsconfig.json",
+		"package": "vsce package --no-dependencies"
 	},
 	"devDependencies": {
 		"@types/node": "^18.19.130",
 		"@types/vscode": "^1.92.0",
+		"@vscode/vsce": "^3.0.0",
 		"typescript": "^5.4.0"
 	},
 	"engines": {
@@ -321,12 +323,12 @@
 				},
 				"devinCliChat.diretorioSkillsWorkspace": {
 					"type": "string",
-					"default": ".cognition/skills",
+					"default": ".devin/skills",
 					"description": "Diretorio de skills no workspace (cada subpasta deve conter um SKILL.md)."
 				},
 				"devinCliChat.diretorioSkillsGlobal": {
 					"type": "string",
-					"default": "~/.config/cognition/skills",
+					"default": "~/.config/devin/skills",
 					"description": "Diretorio global de skills do usuario."
 				}
 			}

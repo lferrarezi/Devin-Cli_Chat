@@ -329,8 +329,8 @@ function scanAgents() {
 }
 function scanSkills() {
   const dirs = [
-    resolveMaybe(cfg().get('diretorioSkillsWorkspace') || '.cognition/skills'),
-    resolveMaybe(cfg().get('diretorioSkillsGlobal') || '~/.config/cognition/skills'),
+    resolveMaybe(cfg().get('diretorioSkillsWorkspace') || '.devin/skills'),
+    resolveMaybe(cfg().get('diretorioSkillsGlobal') || '~/.config/devin/skills'),
     resolveMaybe('.claude/skills'),
     resolveMaybe('~/.claude/skills')
   ];
@@ -424,7 +424,7 @@ async function pickModel() {
 async function pickSkills() {
   const available = scanSkills();
   if (!available.length) {
-    vscode.window.showInformationMessage('Nenhuma skill encontrada em .cognition/skills ou ~/.config/cognition/skills.');
+    vscode.window.showInformationMessage('Nenhuma skill encontrada em .devin/skills ou ~/.config/devin/skills.');
     return;
   }
   const current = new Set(selectedSkills());
@@ -1342,7 +1342,7 @@ function renderSkills(){
   var list = byId('skillsList'); if(!list) return;
   list.innerHTML = '';
   var skills = META.skills || []; var sel = new Set(META.selectedSkills || []);
-  if(!skills.length){ var d = document.createElement('div'); d.className = 'skillItem empty'; d.textContent = 'Nenhuma skill em .cognition/skills'; list.appendChild(d); return; }
+  if(!skills.length){ var d = document.createElement('div'); d.className = 'skillItem empty'; d.textContent = 'Nenhuma skill em .devin/skills'; list.appendChild(d); return; }
   skills.forEach(function(name){
     var item = document.createElement('label'); item.className = 'skillItem';
     var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = sel.has(name);
@@ -1452,7 +1452,7 @@ function openSkillsMenu(){
   head.appendChild(title); head.appendChild(sp);
   menu.appendChild(head);
   var skills = META.skills || []; var sel = new Set(META.selectedSkills || []);
-  if(!skills.length){ var e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Nenhuma skill em .cognition/skills'; menu.appendChild(e); }
+  if(!skills.length){ var e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Nenhuma skill em .devin/skills'; menu.appendChild(e); }
   skills.forEach(function(name){
     var lab = document.createElement('label'); lab.className = 'check';
     var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = sel.has(name);

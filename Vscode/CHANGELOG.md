@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.34.0
+
+- Diretório padrão de skills corrigido para `.devin/skills` (padrão oficial do Devin CLI) em ambas as extensões.
+- Script `npm run package` e devDependency `@vscode/vsce` adicionados ao VSCode.
+- Caminho absoluto de JDK removido do `gradle.properties` JetBrains; substituído por instruções de configuração via `JAVA_HOME`.
+
 ## 0.33.0
 
 - Corrige modo terminal: adiciona flag `-p` ao comando enviado ao Devin CLI, alinhando com o modo integrado.

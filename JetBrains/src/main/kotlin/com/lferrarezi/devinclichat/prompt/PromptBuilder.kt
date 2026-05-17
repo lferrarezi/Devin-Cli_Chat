@@ -131,13 +131,20 @@ object PromptBuilder {
             when (item) {
                 is AttachmentItem.FileItem -> {
                     if (item.binary) "Arquivo anexado: ${item.relativePath}\nCaminho: ${item.filePath}\n(arquivo binário — use o caminho)"
-                    else "Arquivo anexado: ${item.relativePath}\n```${item.language}\n${item.content}\n```"
+                    else {
+                        val truncNote = if (item.truncated) "\n[NOTA: arquivo truncado — exibindo apenas os primeiros bytes por limite de tamanho.]" else ""
+                        "Arquivo anexado: ${item.relativePath}\n```${item.language}\n${item.content}\n```$truncNote"
+                    }
                 }
                 is AttachmentItem.FolderItem -> {
-                    item.files.joinToString("\n\n") { f ->
+                    val filesBlock = item.files.joinToString("\n\n") { f ->
                         if (f.binary) "Arquivo: ${f.relativePath}\n(binário — use o caminho)"
                         else "Arquivo: ${f.relativePath}\n```${f.language}\n${f.content}\n```"
                     }
+                    val truncNote = if (item.truncated)
+                        "\n\n[NOTA: pasta truncada — exibindo ${item.files.size} arquivo(s); demais ignorados por limite ou por serem muito grandes.]"
+                    else ""
+                    filesBlock + truncNote
                 }
                 is AttachmentItem.SelectionItem ->
                     "Contexto do editor: ${item.label}\n```${item.language}\n${item.content}\n```"

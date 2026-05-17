@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.35.0
+
+- Indicação de truncamento no prompt: pastas e arquivos truncados por limite de tamanho exibem nota explicativa enviada ao Devin CLI.
+- JetBrains: `maxFilesPerFolder` separado de `maximoAnexos` como configuração independente.
+- JetBrains: flag `truncated` corrigida em `readFolderItem` (estava sempre `false`).
+- README reescrito: instruções de uso, configuração, dev setup e estrutura de arquivos.
+- `RELEASE_CHECKLIST.md` criado na raiz do repositório.
+
+## 0.34.1
+
+- OutputChannel `Devin Cli Chat` adicionado: logs de ativação, webview, CLI e erros visíveis em `View → Output`.
+- `Devin Cli Chat: Verificar Devin CLI` agora abre o Output automaticamente.
+
 ## 0.34.0
 
 - Diretório padrão de skills corrigido para `.devin/skills` (padrão oficial do Devin CLI) em ambas as extensões.

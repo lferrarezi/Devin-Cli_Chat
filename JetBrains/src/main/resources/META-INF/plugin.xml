@@ -1,7 +1,7 @@
 <idea-plugin>
   <id>com.lferrarezi.devinclichat</id>
   <name>Devin Cli Chat</name>
-  <version>0.34.0</version>
+  <version>0.35.0</version>
 
   <vendor email="lferrarezi@gmail.com" url="https://github.com/lferrarezi">
     Luiz Alberto Abarca Ferrarezi
@@ -13,11 +13,12 @@
     agentes <code>AGENT.md</code>, skills <code>SKILL.md</code>, anexo de arquivos e pastas,
     revisão de git diff, menções <code>@agente</code> e <code>#skill</code> no prompt,
     modo integrado e modo terminal. Interface em português brasileiro.<br/><br/>
-    Paridade total com a extensão VSCode Devin Cli Chat v0.34.0.
+    Paridade total com a extensão VSCode Devin Cli Chat v0.35.0.
   ]]></description>
 
   <change-notes><![CDATA[
-    <b>0.34.0</b> — Diretório padrão de skills corrigido para .devin/skills (padrão Devin CLI); script npm package e @vscode/vsce adicionados ao VSCode; caminho absoluto de JDK removido do gradle.properties.
+    <b>0.35.0</b> — Indicação de truncamento no prompt para pastas e arquivos cortados por tamanho; maxFilesPerFolder separado de maximoAnexos; flag truncated corrigida em readFolderItem; README e RELEASE_CHECKLIST atualizados.
+    <br/><b>0.34.0</b> — Diretório padrão de skills corrigido para .devin/skills (padrão Devin CLI); script npm package e @vscode/vsce adicionados ao VSCode; caminho absoluto de JDK removido do gradle.properties.
     <br/><b>0.33.0</b> — Correções funcionais: terminal usa -p, modelo auto sempre enviado via --model, diretório de skills alinhado com VSCode (.cognition/skills), pasta anexada ignora node_modules/.git/build/dist, limite de arquivos de pasta 10→50, terminal integrado usa TerminalView da IDE.
     <br/><b>0.32.0</b> — Licença Apache 2.0, arquivo NOTICE, alinhamento de versão VSCode/JetBrains.
     <br/><b>0.31.0</b> — Alinhamento de versão com a extensão VSCode. Correções: scroll do chat, rendering de blocos de código, metadados de sessão salvos/restaurados no histórico, modality do dialog de histórico, flag -p no modo terminal.

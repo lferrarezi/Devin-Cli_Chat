@@ -1434,13 +1434,15 @@ function attachmentFullBlock(item){
   var fence = String.fromCharCode(96,96,96);
   if(item.type === 'folder'){
     var files = item.files || [];
+    var truncNote = item.truncated ? '\n\n[NOTA: pasta truncada — exibindo ' + files.length + ' arquivo(s); demais arquivos ignorados por limite ou por serem muito grandes (>1 MB).]' : '';
     return files.map(function(f){
       var lang = f.language || '';
       return '\n\nArquivo anexado ' + (f.rel || f.file || f.base || 'arquivo') + ' (' + lang + '):\n' + fence + lang + '\n' + (f.text || '') + '\n' + fence;
-    }).join('');
+    }).join('') + truncNote;
   }
   var heading = item.type === 'file' ? ('Arquivo anexado ' + (item.file || item.label)) : ('Contexto anexado de ' + item.label);
-  return '\n\n' + heading + ' (' + (item.language||'') + '):\n' + fence + (item.language||'') + '\n' + (item.text || '') + '\n' + fence;
+  var fileTruncNote = item.truncated ? '\n[NOTA: arquivo truncado — exibindo apenas os primeiros bytes por limite de tamanho.]' : '';
+  return '\n\n' + heading + ' (' + (item.language||'') + '):\n' + fence + (item.language||'') + '\n' + (item.text || '') + '\n' + fence + fileTruncNote;
 }
 
 function renderContextChips(){

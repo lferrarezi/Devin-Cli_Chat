@@ -45,7 +45,7 @@ object AttachmentReader {
     fun readFolderItem(folder: File, projectBasePath: String?): AttachmentItem.FolderItem? {
         return try {
             val limit = DevinSettings.getInstance().state.limiteBytesAnexo
-            val maxFiles = DevinSettings.getInstance().state.maximoAnexos
+            val maxFiles = DevinSettings.getInstance().state.maxFilesPerFolder
             val files = folder.walkTopDown()
                 .onEnter { dir -> dir.name !in SKIP_DIRS && !dir.name.startsWith('.') || dir == folder }
                 .filter { it.isFile }
@@ -68,7 +68,7 @@ object AttachmentReader {
             val label = "${folder.name} (${files.size})"
             AttachmentItem.FolderItem(
                 id = nextId(), label = label,
-                folderPath = folder.path, files = files, truncated = false
+                folderPath = folder.path, files = files, truncated = files.size >= maxFiles
             )
         } catch (_: Exception) { null }
     }

@@ -30,6 +30,7 @@ class DevinSettings : PersistentStateComponent<DevinSettings.State> {
         var incluirConteudoAgenteSkillNoPrompt: Boolean = true,
         var limiteBytesArquivoMd: Long = 65_536L,
         var maximoAnexos: Int = 50,
+        var maxFilesPerFolder: Int = 50,
         var limiteBytesAnexo: Long = 524_288L,
         var modelosDisponiveis: MutableList<String> = mutableListOf(),
         var timeoutDescobertaModelosMs: Long = 2_500L,

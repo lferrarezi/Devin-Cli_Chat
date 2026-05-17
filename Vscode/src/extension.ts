@@ -19,6 +19,12 @@ const ATTACH_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out'
 let provider;
 let statusBar;
 let extContext;
+let outputChannel;
+
+function log(msg) {
+  const ts = new Date().toISOString();
+  if (outputChannel) outputChannel.appendLine(`[${ts}] ${msg}`);
+}
 
 function cfg() { return vscode.workspace.getConfiguration(EXT); }
 function workspaceRoot() {
@@ -186,6 +192,8 @@ function openTerminal(text) {
 function runIntegrated(text) {
   return new Promise((resolve) => {
     const args = [...baseArgs(), '-p', '--', fullPrompt(text)];
+    log(`runIntegrated: ${devinPath()} ${args.slice(0, -1).join(' ')} -- [prompt ${fullPrompt(text).length} chars]`);
+    log(`  cwd: ${defaultCwd()}`);
     let settled = false;
     function done(value) {
       if (settled) return;
@@ -200,6 +208,9 @@ function runIntegrated(text) {
         maxBuffer: 1024 * 1024 * 16,
         windowsHide: true
       }, (err, stdout, stderr) => {
+        if (err) log(`runIntegrated erro: code=${err.code} signal=${err.signal} killed=${err.killed} msg=${err.message}`);
+        if (stderr && stderr.trim()) log(`runIntegrated stderr: ${stderr.slice(0, 500)}`);
+        if (stdout && stdout.trim()) log(`runIntegrated stdout: ${stdout.slice(0, 200)}...`);
         if (err && process.platform === 'win32') {
           runIntegratedViaBash(text, err).then(done);
           return;
@@ -207,10 +218,12 @@ function runIntegrated(text) {
         done(friendlyCliOutput(stdout, stderr, err));
       });
       child.on('error', (err) => {
+        log(`runIntegrated child error: ${err.message}`);
         if (process.platform === 'win32') runIntegratedViaBash(text, err).then(done);
         else done(`Falha ao iniciar Devin CLI: ${err.message}\n\nValide o caminho em devinCliChat.caminhoDevin e execute "Devin Cli Chat: Verificar Devin CLI".`);
       });
     } catch (err) {
+      log(`runIntegrated catch: ${err.message}`);
       if (process.platform === 'win32') runIntegratedViaBash(text, err).then(done);
       else done(`Falha ao iniciar Devin CLI: ${err.message}\n\nValide o caminho em devinCliChat.caminhoDevin e execute "Devin Cli Chat: Verificar Devin CLI".`);
     }
@@ -486,10 +499,12 @@ class ChatViewProvider {
     this.view = view;
     view.webview.options = { enableScripts: true, localResourceRoots: [this.context.extensionUri] };
     view.webview.html = this.html(view.webview);
+    log('WebView resolvida e HTML injetado.');
 
     view.webview.onDidReceiveMessage(async (message) => {
       try {
         const type = message && message.type;
+        log(`Mensagem recebida do webview: type=${type}`);
         if (type === 'ready') { this.refreshMeta(); this.replaySession(); this.pushCurrentSelection(); return; }
         if (type === 'requestSelection') { this.pushCurrentSelection(true); return; }
         if (type === 'attachMenu') { await this.chooseAttachSource(); return; }
@@ -576,6 +591,8 @@ class ChatViewProvider {
       } catch (err) {
         this.busy = false;
         this.post({ type: 'busy', value: false });
+        log(`ERRO no handler do webview: ${err && err.message ? err.message : String(err)}`);
+        if (err && err.stack) log(err.stack);
         this.post({ type: 'message', role: 'assistant', text: 'Falha ao executar acao do painel: ' + (err && err.message ? err.message : String(err)) });
       }
     });
@@ -895,6 +912,7 @@ class ChatViewProvider {
 
     try {
       const mode = currentMode();
+      log(`send: modo=${mode} prompt=${prompt.length} chars`);
       if (mode === 'terminal') {
         openTerminal(prompt);
         const reply = 'Sessao aberta no terminal integrado, ja posicionada na pasta aberta no VS Code.';
@@ -903,12 +921,14 @@ class ChatViewProvider {
         return;
       }
       const answer = await runIntegrated(prompt);
+      log(`send: resposta recebida (${answer ? answer.length : 0} chars)`);
       const outTokens = estimateTokens(answer);
       this.session.tokensOut = (this.session.tokensOut || 0) + outTokens;
       this.session.tokens = (this.session.tokens || 0) + outTokens;
       this.post({ type: 'message', role: 'assistant', text: answer });
       this.session.messages.push({ role: 'assistant', text: answer, ts: Date.now(), tokens: outTokens });
     } catch (err) {
+      log(`send ERRO: ${err && err.message ? err.message : String(err)}`);
       const msg = 'Falha ao enviar para o Devin CLI: ' + (err && err.message ? err.message : String(err));
       this.post({ type: 'message', role: 'assistant', text: msg });
       this.session.messages.push({ role: 'assistant', text: msg, ts: Date.now() });
@@ -1639,6 +1659,12 @@ post({ type: 'ready' });
 
 async function activate(context) {
   extContext = context;
+  outputChannel = vscode.window.createOutputChannel('Devin Cli Chat');
+  context.subscriptions.push(outputChannel);
+  log(`Extensão ativando — VS Code ${vscode.version}, extensão ${context.extension.packageJSON.version}`);
+  log(`Plataforma: ${process.platform} ${process.arch}`);
+  log(`Devin CLI path configurado: ${devinPath()}`);
+  log(`Workspace: ${workspaceRoot() || 'nenhum'}`);
   provider = new ChatViewProvider(context);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider('devinCliChat.chatView', provider, { webviewOptions: { retainContextWhenHidden: true } }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.abrirPainel', async () => vscode.commands.executeCommand('workbench.view.extension.devinCliChat')));
@@ -1684,8 +1710,17 @@ async function activate(context) {
     if (ok === 'Limpar') { await saveHistory([]); if (provider) provider.post({ type: 'history', sessions: [] }); }
   }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.verificarCli', () => {
+    outputChannel.show(true);
+    log(`Verificando Devin CLI: ${devinPath()}`);
     cp.execFile(devinPath(), ['--version'], { cwd: defaultCwd(), windowsHide: true }, (err, stdout, stderr) => {
-      vscode.window.showInformationMessage(err ? `Falha ao verificar Devin CLI: ${err.message}` : `Devin CLI encontrado: ${(stdout || stderr || 'ok').trim()}`);
+      if (err) {
+        log(`verificarCli ERRO: code=${err.code} msg=${err.message}`);
+        vscode.window.showErrorMessage(`Falha ao verificar Devin CLI: ${err.message}`);
+      } else {
+        const version = (stdout || stderr || 'ok').trim();
+        log(`verificarCli OK: ${version}`);
+        vscode.window.showInformationMessage(`Devin CLI encontrado: ${version}`);
+      }
     });
   }));
   let selectionTimer;

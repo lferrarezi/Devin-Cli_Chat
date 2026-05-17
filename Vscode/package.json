@@ -2,12 +2,22 @@
 	"name": "devin-cli-chat",
 	"displayName": "Devin Cli Chat",
 	"description": "Tela propria de chat para Devin CLI no VS Code, em portugues brasileiro, com contexto compacto, aliases reais do CLI e anexos resilientes.",
-	"version": "0.32.0",
+	"version": "0.33.0",
 	"publisher": "luiz-alberto-abarca-ferrarezi",
 	"author": {
 		"name": "Luiz Alberto Abarca Ferrarezi"
 	},
 	"license": "Apache-2.0",
+	"scripts": {
+		"compile": "tsc -p tsconfig.json",
+		"vscode:prepublish": "npm run compile",
+		"watch": "tsc -watch -p tsconfig.json"
+	},
+	"devDependencies": {
+		"@types/node": "^18.19.130",
+		"@types/vscode": "^1.92.0",
+		"typescript": "^5.4.0"
+	},
 	"engines": {
 		"vscode": "^1.92.0"
 	},
@@ -24,21 +34,6 @@
 		"luiz-alberto-abarca-ferrarezi",
 		"devin-cli-chat",
 		"chat-proprio"
-	],
-	"activationEvents": [
-		"onView:devinCliChat.chatView",
-		"onCommand:devinCliChat.abrirPainel",
-		"onCommand:devinCliChat.abrirHistorico",
-		"onCommand:devinCliChat.novaSessao",
-		"onCommand:devinCliChat.enviarSelecao",
-		"onCommand:devinCliChat.revisarDiff",
-		"onCommand:devinCliChat.selecionarModelo",
-		"onCommand:devinCliChat.selecionarAgente",
-		"onCommand:devinCliChat.verificarCli",
-		"onCommand:devinCliChat.atualizarModelos",
-		"onCommand:devinCliChat.selecionarSkills",
-		"onCommand:devinCliChat.selecionarModo",
-		"onCommand:devinCliChat.limparHistorico"
 	],
 	"main": "./out/extension.js",
 	"contributes": {

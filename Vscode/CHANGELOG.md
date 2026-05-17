@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.33.0
+
+- Corrige modo terminal: adiciona flag `-p` ao comando enviado ao Devin CLI, alinhando com o modo integrado.
+- Remove `activationEvents` redundantes do `package.json` (gerados automaticamente pelo VS Code).
+- Adiciona scripts de build (`compile`, `vscode:prepublish`, `watch`) e `devDependencies` de TypeScript.
+- Garante rastreamento de `out/extension.js` no repositório.
+
+## 0.32.0
+
+- Licença atualizada para Apache 2.0 em ambas as extensões.
+- Arquivo NOTICE criado com autor e repositório.
+
+## 0.31.0
+
+- Alinhamento de versão VSCode/JetBrains em 0.31.0.
+- Correções: scroll do chat, rendering de blocos de código, metadados de sessão no histórico.
+
 ## 0.30.0
 
 - Evolui o botao **Historico** do painel VS Code para persistir a sessao atual antes de abrir a lista.

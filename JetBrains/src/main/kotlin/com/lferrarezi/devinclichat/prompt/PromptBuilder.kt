@@ -75,7 +75,7 @@ object PromptBuilder {
         out.addAll(s.argumentosPadrao.filter { it.isNotBlank() })
         val flag = s.argumentoModelo.trim()
         val model = ModelManager.sanitizeModel(s.modeloAtual)
-        if (flag.isNotBlank() && model != "auto") {
+        if (flag.isNotBlank()) {
             out.add(flag)
             out.add(model)
         }

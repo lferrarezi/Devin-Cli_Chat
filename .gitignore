@@ -1,5 +1,7 @@
 node_modules/
 out/
+!Vscode/out/
+!Vscode/out/extension.js
 old/
 .DS_Store
 .vscode-test/

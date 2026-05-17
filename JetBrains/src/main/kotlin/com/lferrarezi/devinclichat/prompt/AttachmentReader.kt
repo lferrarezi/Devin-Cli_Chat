@@ -37,11 +37,17 @@ object AttachmentReader {
         } catch (_: Exception) { null }
     }
 
+    private val SKIP_DIRS = setOf(
+        "node_modules", ".git", "build", "dist", "out", ".venv", "__pycache__",
+        ".next", ".nuxt", ".cache", "target", ".idea", ".gradle", "vendor", "coverage"
+    )
+
     fun readFolderItem(folder: File, projectBasePath: String?): AttachmentItem.FolderItem? {
         return try {
             val limit = DevinSettings.getInstance().state.limiteBytesAnexo
             val maxFiles = DevinSettings.getInstance().state.maximoAnexos
             val files = folder.walkTopDown()
+                .onEnter { dir -> dir.name !in SKIP_DIRS && !dir.name.startsWith('.') || dir == folder }
                 .filter { it.isFile }
                 .take(maxFiles)
                 .mapNotNull { f ->

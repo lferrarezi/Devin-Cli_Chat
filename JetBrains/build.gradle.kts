@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.lferrarezi"
-version = "0.32.0"
+version = "0.33.0"
 
 kotlin {
     jvmToolchain(17)
@@ -18,6 +18,7 @@ dependencies {
         pycharmCommunity("2023.1")
         pluginVerifier()
         zipSigner()
+        bundledPlugin("org.jetbrains.plugins.terminal")
     }
 
     testImplementation(kotlin("test-junit5"))

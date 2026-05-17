@@ -88,22 +88,27 @@ object DevinRunner {
     }
 
     private fun openSystemTerminal(project: Project, command: String) {
-        try {
-            ToolWindowManager.getInstance(project).getToolWindow("Terminal")?.show(null)
-        } catch (_: Exception) {}
-
-        ApplicationManager.getApplication().executeOnPooledThread {
+        ApplicationManager.getApplication().invokeLater {
             try {
-                val shell = if (isWindows()) findGitBash() ?: "cmd" else (System.getenv("SHELL") ?: "/bin/sh")
-                val args = if (isWindows() && shell.endsWith("bash.exe", ignoreCase = true))
-                    listOf(shell, "--login", "-i", "-c", command)
-                else
-                    listOf(shell, "-c", command)
-                ProcessBuilder(args)
-                    .directory(File(project.basePath ?: System.getProperty("user.home")))
-                    .inheritIO()
-                    .start()
-            } catch (_: Exception) {}
+                val terminalView = org.jetbrains.plugins.terminal.TerminalView.getInstance(project)
+                val widget = terminalView.createLocalShellWidget(
+                    project.basePath ?: System.getProperty("user.home"),
+                    "Devin CLI",
+                    true
+                )
+                widget.executeCommand(command)
+            } catch (_: Exception) {
+                // fallback: exibe o comando em notificação
+                com.intellij.notification.Notifications.Bus.notify(
+                    com.intellij.notification.Notification(
+                        "Devin Cli Chat",
+                        "Devin CLI – modo terminal",
+                        "<pre>${command.replace("<", "&lt;")}</pre>",
+                        com.intellij.notification.NotificationType.INFORMATION
+                    ),
+                    project
+                )
+            }
         }
     }
 

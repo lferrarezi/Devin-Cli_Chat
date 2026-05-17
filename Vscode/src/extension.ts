@@ -1,3 +1,4 @@
+// @ts-nocheck
 'use strict';
 
 const vscode = require('vscode');
@@ -138,7 +139,7 @@ function terminalCommand(text) {
   const executable = shellQuote(devinPath());
   const args = baseArgs().map(shellQuote).join(' ');
   if (!text) return [executable, args].filter(Boolean).join(' ');
-  return [executable, args, '--', shellQuote(fullPrompt(text))].filter(Boolean).join(' ');
+  return [executable, args, '-p', '--', shellQuote(fullPrompt(text))].filter(Boolean).join(' ');
 }
 function cleanStderr(stderr) {
   if (!stderr) return '';

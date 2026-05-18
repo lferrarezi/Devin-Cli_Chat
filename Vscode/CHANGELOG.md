@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.0.0-rc.1
+
+Release candidate para a versão 1.0. Inclui todas as correções e melhorias das releases 0.36.1–0.38.0.
+
+### Mudanças nesta release
+
+- `deactivate()` agora chama `cancelIntegratedRun()` — cancela processos pendentes ao desativar a extensão.
+- `"preview": true` adicionado ao `package.json` — sinaliza RC no Marketplace.
+- `validate-vsix.js` agora verifica SemVer prerelease e flag `"preview": true` em releases candidate.
+- `test/unit.js` agora inclui smoke test de `activate()` — verifica que subscriptions são registradas sem exceção.
+
+### Funcionalidades cobertas (desde 0.9.0)
+
+- Chat interativo com Devin CLI via `devin -p` (modo integrado e terminal).
+- Seletor de modelo (`auto`, `sonnet`, `opus`, `swe`, `gpt`, `codex`, `adaptive`) com `auto` omitindo `--model`.
+- Seletor de agente e skills com scan de `.devin/agents` e `.devin/skills`.
+- Histórico de sessões com carregar, excluir e limpar.
+- Anexos: arquivos abertos, seleção do editor, pastas do workspace.
+- Cancelamento de execução longa via botão ×.
+- Verificação de CLI via botão i no cabeçalho.
+- Log de diagnóstico em `View → Output → Devin Cli Chat`.
+- CSP nonce, XSS eliminado (`textContent`), `execFile` (sem shell injection).
+- Suite de testes e validadores reproduzíveis (`validate:webview`, `validate:vsix`, `test`, `release:check`).
+
+### Limitações conhecidas nesta RC
+
+- Streaming de resposta não implementado — a resposta completa aparece de uma vez ao final.
+- Modo terminal não retorna resposta para o painel de chat.
+- Descoberta automática de modelos é local-only (sem execução de processos externos por padrão).
+
 ## 0.38.0
 
 - Corrige 4 ocorrências de `innerHTML` com dados controlados por usuário (nomes de arquivo, labels, seleção do editor) — substituídas por construção DOM com `textContent`, eliminando risco de XSS.

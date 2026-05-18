@@ -398,6 +398,46 @@ test('script da webview tem ação cancelRun', () => {
   assert.ok(scriptMatch && scriptMatch[1].includes('cancelRun'), 'deve ter cancelRun');
 });
 
+// ── Teste: activate smoke ─────────────────────────────────────────────────────
+console.log('\n── activate smoke ──');
+
+test('activate não lança exceção e registra subscriptions', () => {
+  const subscriptions = [];
+  const mockCtx = {
+    subscriptions,
+    extensionPath: path.join(__dirname, '..'),
+    extensionUri: mockVscode.Uri.file(path.join(__dirname, '..')),
+    globalState: {
+      get: () => undefined,
+      update: async () => {},
+      setKeysForSync: () => {},
+      keys: () => [],
+    },
+    workspaceState: {
+      get: () => undefined,
+      update: async () => {},
+      keys: () => [],
+    },
+    storagePath: os.tmpdir(),
+    globalStoragePath: os.tmpdir(),
+    logPath: os.tmpdir(),
+    extensionMode: 3,
+    storageUri: null,
+    globalStorageUri: null,
+    logUri: null,
+    secrets: {
+      get: async () => undefined,
+      store: async () => {},
+      delete: async () => {},
+      onDidChange: () => ({ dispose: () => {} }),
+    },
+    extension: { id: 'test.devin-cli-chat', packageJSON: {} },
+    asAbsolutePath: (p) => path.join(__dirname, '..', p),
+  };
+  assert.doesNotThrow(() => { ext.activate(mockCtx); }, 'activate não deve lançar exceção');
+  assert.ok(subscriptions.length > 0, 'deve registrar ≥1 subscription, registrou: ' + subscriptions.length);
+});
+
 // ── Resultado ─────────────────────────────────────────────────────────────────
 console.log('');
 console.log(`${_passed} passed, ${_failed} failed`);

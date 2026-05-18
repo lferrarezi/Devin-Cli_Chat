@@ -119,20 +119,36 @@ else ok('sem VSIX aninhado');
 
 // ── 4. Versão interna bate com esperada ───────────────────────────────────────
 const pkgContent = extractFile('extension/package.json');
+let innerPkg = null;
 if (!pkgContent) {
   fail('falha ao extrair extension/package.json');
 } else {
   try {
-    const inner = JSON.parse(pkgContent);
-    if (inner.version === expectedVersion) {
-      ok('versão interna correta: ' + inner.version);
+    innerPkg = JSON.parse(pkgContent);
+    if (innerPkg.version === expectedVersion) {
+      ok('versão interna correta: ' + innerPkg.version);
     } else {
-      fail('versão interna ' + inner.version + ' != esperado ' + expectedVersion);
+      fail('versão interna ' + innerPkg.version + ' != esperado ' + expectedVersion);
     }
-    if (inner.main === './out/extension.js') ok('main aponta para ./out/extension.js');
-    else fail('main incorreto: ' + inner.main);
+    if (innerPkg.main === './out/extension.js') ok('main aponta para ./out/extension.js');
+    else fail('main incorreto: ' + innerPkg.main);
   } catch (e) {
     fail('extension/package.json inválido: ' + e.message);
+  }
+}
+
+// ── 4b. Validações específicas para Release Candidate ─────────────────────────
+const isPrerelease = expectedVersion.includes('-');
+if (isPrerelease) {
+  console.log('  (RC) versão prerelease detectada: ' + expectedVersion);
+  // SemVer prerelease: deve conter sufixo com hífem e pelo menos um segmento
+  const semverPre = /^\d+\.\d+\.\d+-.+$/.test(expectedVersion);
+  if (semverPre) ok('versão SemVer prerelease válida: ' + expectedVersion);
+  else fail('formato de versão prerelease inválido: ' + expectedVersion);
+  // preview: true obrigatório em releases candidate
+  if (innerPkg) {
+    if (innerPkg.preview === true) ok('"preview": true presente (obrigatório no RC)');
+    else fail('"preview": true AUSENTE no package.json do RC');
   }
 }
 

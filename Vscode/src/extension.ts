@@ -1843,7 +1843,9 @@ async function activate(context) {
   updateStatusBar();
 }
 
-function deactivate() {}
+function deactivate() {
+  cancelIntegratedRun();
+}
 
 module.exports = {
   activate,

@@ -7,9 +7,51 @@ import java.nio.file.Paths
 
 object ModelManager {
 
+    @Volatile private var modelsAt: Long = 0
+    @Volatile private var modelsValues: List<String>? = null
+
+    fun isSafeModelId(value: String): Boolean =
+        Regex("^[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}$").matches(value.trim())
+
     fun sanitizeModel(value: String?): String {
         val s = (value ?: "").trim().lowercase()
-        return if (s.isEmpty() || s == "default" || s == "padrao" || s == "padrão" || s !in DevinPlugin.VALID_MODELS) "auto" else s
+        if (s.isEmpty() || s == "default" || s == "padrao" || s == "padrão") return "auto"
+        if (s == "auto") return "auto"
+        if (s in DevinPlugin.VALID_MODELS) return s
+        return if (isSafeModelId(s)) s else "auto"
+    }
+
+    fun modelsForUi(): List<String> {
+        val state = DevinSettings.getInstance().state
+        val ttl = state.cacheModelosMs
+        val now = System.currentTimeMillis()
+        val cached = modelsValues
+        if (ttl > 0 && cached != null && now - modelsAt < ttl) return cached
+
+        val fromConfig = readCurrentModelFromDevinConfig()
+        val result = mutableListOf<String>()
+        result.add("auto")
+        if (fromConfig != null && fromConfig !in result) result.add(fromConfig)
+        result.addAll(state.modelosDisponiveis.filter { it.isNotBlank() && it !in result })
+        result.addAll(readModelsFromCaches().filter { it !in result })
+        val current = sanitizeModel(state.modeloAtual)
+        if (current != "auto" && current !in result) result.add(0, current)
+        val distinct = result.distinct()
+
+        modelsValues = distinct
+        modelsAt = now
+        return distinct
+    }
+
+    fun invalidateCache() {
+        modelsAt = 0
+        modelsValues = null
+    }
+
+    fun invalidateAllCaches() {
+        invalidateCache()
+        AgentScanner.invalidateCache()
+        SkillScanner.invalidateCache()
     }
 
     fun readCurrentModelFromDevinConfig(): String? {
@@ -20,19 +62,6 @@ object ModelManager {
             val match = Regex(""""model"\s*:\s*"([^"]+)"""").find(json)
             match?.groupValues?.get(1)?.let { sanitizeModel(it).takeIf { m -> m != "auto" } }
         } catch (_: Exception) { null }
-    }
-
-    fun modelsForUi(): List<String> {
-        val s = DevinSettings.getInstance().state
-        val fromConfig = readCurrentModelFromDevinConfig()
-        val result = mutableListOf<String>()
-        result.add("auto")
-        if (fromConfig != null && fromConfig !in result) result.add(fromConfig)
-        result.addAll(s.modelosDisponiveis.filter { it.isNotBlank() && it !in result })
-        result.addAll(readModelsFromCaches().filter { it !in result })
-        val current = sanitizeModel(s.modeloAtual)
-        if (current != "auto" && current !in result) result.add(0, current)
-        return result.distinct()
     }
 
     private fun readModelsFromCaches(): List<String> {

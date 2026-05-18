@@ -9,6 +9,7 @@ import com.lferrarezi.devinclichat.ui.ChatPanel
 class AtualizarModelosAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
+        ModelManager.invalidateAllCaches()
         val models = ModelManager.modelsForUi()
         Messages.showInfoMessage(project, "Modelos disponíveis: ${models.joinToString(", ")}", "Modelos Devin CLI")
         ChatPanel.getInstance(project)?.refreshMeta()

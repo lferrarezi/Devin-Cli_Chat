@@ -45,6 +45,7 @@ class ChatPanel(val project: Project) : JPanel(BorderLayout()) {
         add(composerPanel, BorderLayout.SOUTH)
 
         composerPanel.onSend = { text -> handleSend(text) }
+        composerPanel.onCancel = { handleCancel() }
         composerPanel.onAttach = { AttachPopup.show(project, composerPanel) { handleAttach(it) } }
         composerPanel.onSelectSkills = { SkillsPopup.show(project, composerPanel) { refreshMeta() } }
         composerPanel.onSelectModel = { comp -> ModelPopup.show(comp, project) { refreshMeta() } }
@@ -81,9 +82,11 @@ class ChatPanel(val project: Project) : JPanel(BorderLayout()) {
 
         val right = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 2))
         right.isOpaque = false
+        val verifyBtn = buildHeaderBtn("i", "Verificar Devin CLI") { handleVerifyCli() }
         val historyBtn = buildHeaderBtn("◷", "Historico") { showHistory() }
         val newChatBtn = buildHeaderBtn("+", "Nova conversa") { clearChat() }
         val terminalBtn = buildHeaderBtn("⌁", "Abrir no terminal") { openTerminal() }
+        right.add(verifyBtn)
         right.add(historyBtn)
         right.add(newChatBtn)
         right.add(terminalBtn)
@@ -134,6 +137,19 @@ class ChatPanel(val project: Project) : JPanel(BorderLayout()) {
     }
 
     fun sendText(text: String) = handleSend(text)
+
+    private fun handleCancel() {
+        val ok = DevinRunner.cancelIntegrated()
+        composerPanel.setStatus(if (ok) "Cancelamento solicitado." else "Nenhuma execução ativa para cancelar.")
+    }
+
+    private fun handleVerifyCli() {
+        composerPanel.setStatus("Verificando Devin CLI...")
+        DevinRunner.verifyCli(project) { ok, text ->
+            threadPanel.addMessage("assistant", text)
+            composerPanel.setStatus(if (ok) "pronto" else "Falha na verificação.")
+        }
+    }
 
     fun clearChat() {
         threadPanel.clearMessages()

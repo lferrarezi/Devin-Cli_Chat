@@ -18,6 +18,7 @@ class ComposerPanel(private val project: Project) : JPanel() {
 
     val textArea = JBTextArea(3, 40)
     private val sendButton = JButton("↑")
+    private val cancelButton = JButton("×")
     val chipsBar = ContextChipsBar()
     private val modelChip = JButton("auto")
     private val agentChip = JButton("auto")
@@ -28,6 +29,7 @@ class ComposerPanel(private val project: Project) : JPanel() {
     private val statusLabel = JLabel("pronto")
 
     var onSend: ((String) -> Unit)? = null
+    var onCancel: (() -> Unit)? = null
     var onAttach: (() -> Unit)? = null
     var onSelectSkills: (() -> Unit)? = null
     var onSelectModel: ((Component) -> Unit)? = null
@@ -87,6 +89,7 @@ class ComposerPanel(private val project: Project) : JPanel() {
         styleChip(skillsChip)
         styleChip(attachChip)
         styleSend(sendButton)
+        styleCancel(cancelButton)
 
         modelChip.addActionListener { onSelectModel?.invoke(modelChip) }
         agentChip.addActionListener { onSelectAgent?.invoke(agentChip) }
@@ -94,7 +97,9 @@ class ComposerPanel(private val project: Project) : JPanel() {
         skillsChip.addActionListener { onSelectSkills?.invoke() }
         attachChip.addActionListener { onAttach?.invoke() }
         sendButton.addActionListener { triggerSend() }
+        cancelButton.addActionListener { onCancel?.invoke() }
 
+        cancelButton.isVisible = false
         busyLabel.isVisible = false
         busyLabel.foreground = JBColor(Color(0x1E88E5), Color(0x64B5F6))
     }
@@ -114,6 +119,8 @@ class ComposerPanel(private val project: Project) : JPanel() {
         bar.add(Box.createHorizontalStrut(4))
         bar.add(attachChip)
         bar.add(Box.createHorizontalGlue())
+        bar.add(cancelButton)
+        bar.add(Box.createHorizontalStrut(4))
         bar.add(sendButton)
         return bar
     }
@@ -142,6 +149,17 @@ class ComposerPanel(private val project: Project) : JPanel() {
         btn.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
     }
 
+    private fun styleCancel(btn: JButton) {
+        btn.preferredSize = Dimension(28, 28)
+        btn.minimumSize = Dimension(28, 28)
+        btn.maximumSize = Dimension(28, 28)
+        btn.font = btn.font.deriveFont(Font.BOLD, 14f)
+        btn.isFocusPainted = false
+        btn.border = BorderFactory.createLineBorder(JBColor.border(), 1, true)
+        btn.toolTipText = "Cancelar execução"
+        btn.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+    }
+
     private fun styleSend(btn: JButton) {
         btn.preferredSize = Dimension(28, 28)
         btn.minimumSize = Dimension(28, 28)
@@ -163,6 +181,7 @@ class ComposerPanel(private val project: Project) : JPanel() {
 
     fun setBusy(busy: Boolean) {
         busyLabel.isVisible = busy
+        cancelButton.isVisible = busy
         sendButton.isEnabled = !busy
     }
 

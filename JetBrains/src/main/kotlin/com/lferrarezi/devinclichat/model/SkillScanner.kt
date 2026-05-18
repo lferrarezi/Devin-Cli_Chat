@@ -5,9 +5,20 @@ import java.io.File
 
 object SkillScanner {
 
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<MarkdownEntry>>>()
+    private const val CACHE_TTL_MS = 10_000L
+
+    fun invalidateCache() { cache.clear() }
+
     fun scanEntries(projectBasePath: String?): List<MarkdownEntry> {
+        val key = projectBasePath ?: ""
+        val now = System.currentTimeMillis()
+        val cached = cache[key]
+        if (cached != null && now - cached.first < CACHE_TTL_MS) return cached.second
         val dirs = skillDirs(projectBasePath)
-        return AgentScanner.collectMarkdownEntries(dirs, "skill")
+        val result = AgentScanner.collectMarkdownEntries(dirs, "skill")
+        cache[key] = Pair(now, result)
+        return result
     }
 
     fun scanIds(projectBasePath: String?): List<String> =

@@ -4,7 +4,6 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.CapturingProcessHandler
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.wm.ToolWindowManager
 import com.lferrarezi.devinclichat.prompt.AttachmentItem
 import com.lferrarezi.devinclichat.prompt.PromptBuilder
 import com.lferrarezi.devinclichat.settings.DevinSettings
@@ -17,6 +16,15 @@ object DevinRunner {
         Regex("migration.*already exist", RegexOption.IGNORE_CASE),
         Regex("^\\s*$")
     )
+
+    @Volatile private var activeHandler: CapturingProcessHandler? = null
+    @Volatile private var cancelRequested = false
+
+    fun cancelIntegrated(): Boolean {
+        cancelRequested = true
+        val h = activeHandler ?: return false
+        return try { h.destroyProcess(); true } catch (_: Exception) { false }
+    }
 
     fun runIntegrated(
         project: Project,
@@ -35,19 +43,43 @@ object DevinRunner {
         val args = baseArgs + listOf("-p", "--", result.fullText)
 
         ApplicationManager.getApplication().executeOnPooledThread {
+            cancelRequested = false
             val response = try {
                 val cmdLine = GeneralCommandLine(s.caminhoDevin)
                     .withParameters(args)
                     .withWorkDirectory(project.basePath ?: System.getProperty("user.home"))
                 val handler = CapturingProcessHandler(cmdLine)
+                activeHandler = handler
                 val output = handler.runProcess(s.timeoutChatMs.toInt())
-                friendlyOutput(output.stdout, cleanStderr(output.stderr),
+                activeHandler = null
+                if (cancelRequested) "Execucao cancelada pelo usuario."
+                else friendlyOutput(output.stdout, cleanStderr(output.stderr),
                     if (output.isTimeout) "Timeout após ${s.timeoutChatMs}ms." else null)
             } catch (e: Exception) {
-                if (isWindows()) runViaBash(project, result.fullText, baseArgs) ?: errorMsg(e)
+                activeHandler = null
+                if (cancelRequested) "Execucao cancelada pelo usuario."
+                else if (isWindows()) runViaBash(project, result.fullText, baseArgs) ?: errorMsg(e)
                 else errorMsg(e)
             }
             ApplicationManager.getApplication().invokeLater { onResult(response) }
+        }
+    }
+
+    fun verifyCli(project: Project, onResult: (Boolean, String) -> Unit) {
+        val s = DevinSettings.getInstance().state
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val (ok, text) = try {
+                val cmdLine = GeneralCommandLine(s.caminhoDevin)
+                    .withParameters("--version")
+                    .withWorkDirectory(project.basePath ?: System.getProperty("user.home"))
+                val handler = CapturingProcessHandler(cmdLine)
+                val output = handler.runProcess(5_000)
+                val version = (output.stdout + output.stderr).trim().ifBlank { "ok" }
+                true to "Devin CLI encontrado: $version"
+            } catch (e: Exception) {
+                false to "Falha ao verificar Devin CLI: ${e.message}"
+            }
+            ApplicationManager.getApplication().invokeLater { onResult(ok, text) }
         }
     }
 
@@ -80,9 +112,13 @@ object DevinRunner {
             val cmdLine = GeneralCommandLine(bash, "-c", cmd)
                 .withWorkDirectory(project.basePath ?: System.getProperty("user.home"))
             val handler = CapturingProcessHandler(cmdLine)
+            activeHandler = handler
             val output = handler.runProcess(s.timeoutChatMs.toInt())
-            friendlyOutput(output.stdout, cleanStderr(output.stderr), null)
+            activeHandler = null
+            if (cancelRequested) "Execucao cancelada pelo usuario."
+            else friendlyOutput(output.stdout, cleanStderr(output.stderr), null)
         } catch (e: Exception) {
+            activeHandler = null
             "Falha via Git Bash: ${e.message}"
         }
     }
@@ -98,7 +134,6 @@ object DevinRunner {
                 )
                 widget.executeCommand(command)
             } catch (_: Exception) {
-                // fallback: exibe o comando em notificação
                 com.intellij.notification.Notifications.Bus.notify(
                     com.intellij.notification.Notification(
                         "Devin Cli Chat",
@@ -127,7 +162,7 @@ object DevinRunner {
                 appendLine("Ações recomendadas:")
                 appendLine("1. Execute no terminal: devin model set <modelo>")
                 appendLine("2. Abra Configurações > Tools > Devin Cli Chat e defina o modelo.")
-                appendLine("3. Modelos aceitos: auto, sonnet, opus, swe, gpt.")
+                appendLine("3. Modelos aceitos: auto, adaptive, sonnet, opus, swe, gpt, codex.")
             }
         }
         val parts = buildList {

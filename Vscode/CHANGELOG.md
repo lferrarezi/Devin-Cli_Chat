@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.0-rc.2
+
+- Adiciona contexto automático do editor ativo: quando o usuário envia uma pergunta sem anexos manuais, a extensão inclui automaticamente a seleção ativa ou, se não houver seleção, o arquivo aberto como contexto do prompt enviado ao Devin CLI.
+- Evita duplicidade: contexto automático não é adicionado quando há anexos manuais (`hasExplicitContext`).
+- Adiciona configurações `devinCliChat.usarContextoEditorAutomatico`, `devinCliChat.modoContextoEditorAutomatico` e `devinCliChat.limiteBytesContextoEditorAutomatico`.
+- Arquivo aberto maior que o limite é truncado com nota explícita e label `(truncado)`.
+- Exibe referência compacta `📄 Contexto automatico: arquivo.ts:10-25` na bolha do usuário via `ctxHint`.
+- Expande suite de testes para 55 (11 novos casos cobrindo todos os modos de contexto automático).
+- Mantém todos os gates de validação: webview syntax, validate:vsix, release:check.
+
 ## 1.0.0-rc.1
 
 Release candidate para a versão 1.0. Inclui todas as correções e melhorias das releases 0.36.1–0.38.0.

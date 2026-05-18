@@ -42,6 +42,9 @@ const mockConfigValues = {
   nomeTerminal: 'Devin Cli Chat',
   usarGitBashNoWindows: false,
   gitBashPath: '',
+  usarContextoEditorAutomatico: true,
+  modoContextoEditorAutomatico: 'selecao-ou-arquivo',
+  limiteBytesContextoEditorAutomatico: 200000,
 };
 
 const mockVscode = {
@@ -132,6 +135,7 @@ const {
   scanAgents,
   scanSkills,
   cancelIntegratedRun,
+  automaticEditorContext,
 } = ext._internal;
 
 // ── Mini runner de testes ─────────────────────────────────────────────────────
@@ -396,6 +400,156 @@ test('script da webview tem ação cancelRun', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'extension.ts'), 'utf8');
   const scriptMatch = src.match(/<script nonce="\$\{nonce\}">([\s\S]*?)<\/script>/);
   assert.ok(scriptMatch && scriptMatch[1].includes('cancelRun'), 'deve ter cancelRun');
+});
+
+// ── Testes: automaticEditorContext ────────────────────────────────────────────
+console.log('\n── automaticEditorContext ──');
+
+function makeEditor(opts) {
+  opts = opts || {};
+  var fileText = opts.fileText != null ? opts.fileText : 'linha1\nlinha2\n';
+  var selText  = opts.selText  != null ? opts.selText  : '';
+  var startLine = opts.startLine != null ? opts.startLine : 0;
+  var endLine   = opts.endLine   != null ? opts.endLine   : 0;
+  var isEmpty   = !selText;
+  return {
+    document: {
+      uri: {
+        fsPath: opts.fsPath || '/tmp/base.ts',
+        scheme: opts.scheme || 'file',
+        toString: function() { return 'file://' + (opts.fsPath || '/tmp/base.ts'); }
+      },
+      languageId: opts.languageId || 'typescript',
+      getText: function(sel) { return sel ? selText : fileText; },
+    },
+    selection: {
+      isEmpty: isEmpty,
+      start: { line: startLine, character: 0 },
+      end:   { line: endLine,   character: 0 },
+    },
+  };
+}
+
+test('automaticEditorContext: desativado por config → null', () => {
+  mockConfigValues.usarContextoEditorAutomatico = false;
+  mockVscode.window.activeTextEditor = makeEditor({ selText: 'abc' });
+  const r = automaticEditorContext();
+  assert.strictEqual(r, null);
+  mockConfigValues.usarContextoEditorAutomatico = true;
+  mockVscode.window.activeTextEditor = null;
+});
+
+test('automaticEditorContext: modo=desativado → null', () => {
+  mockConfigValues.modoContextoEditorAutomatico = 'desativado';
+  mockVscode.window.activeTextEditor = makeEditor({ selText: 'abc' });
+  const r = automaticEditorContext();
+  assert.strictEqual(r, null);
+  mockConfigValues.modoContextoEditorAutomatico = 'selecao-ou-arquivo';
+  mockVscode.window.activeTextEditor = null;
+});
+
+test('automaticEditorContext: sem editor ativo → null', () => {
+  mockVscode.window.activeTextEditor = null;
+  const r = automaticEditorContext();
+  assert.strictEqual(r, null);
+});
+
+test('automaticEditorContext: scheme!=file → null', () => {
+  mockVscode.window.activeTextEditor = makeEditor({ scheme: 'untitled', fileText: 'x' });
+  const r = automaticEditorContext();
+  assert.strictEqual(r, null);
+  mockVscode.window.activeTextEditor = null;
+});
+
+test('automaticEditorContext: com selecao → label arquivo:start-end, promptBlock com texto', () => {
+  mockVscode.window.activeTextEditor = makeEditor({
+    fsPath: '/proj/src/app.ts',
+    selText: 'const x = 1;',
+    startLine: 9, endLine: 24,
+  });
+  const r = automaticEditorContext();
+  assert.ok(r, 'deve retornar objeto');
+  assert.strictEqual(r.label, 'app.ts:10-25');
+  assert.ok(r.promptBlock.includes('const x = 1;'), 'deve conter texto selecionado');
+  assert.ok(r.promptBlock.includes('app.ts:10-25'), 'deve conter label');
+  mockVscode.window.activeTextEditor = null;
+});
+
+test('automaticEditorContext: sem selecao → arquivo inteiro com label=basename', () => {
+  mockVscode.window.activeTextEditor = makeEditor({
+    fsPath: '/proj/src/util.ts',
+    fileText: 'export function hello() { return "world"; }',
+    selText: '',
+  });
+  const r = automaticEditorContext();
+  assert.ok(r, 'deve retornar objeto');
+  assert.strictEqual(r.label, 'util.ts');
+  assert.ok(r.promptBlock.includes('export function hello'));
+  assert.ok(!r.promptBlock.includes('truncado'));
+  mockVscode.window.activeTextEditor = null;
+});
+
+test('automaticEditorContext: arquivo grande → truncado, nota, label com "(truncado)"', () => {
+  mockConfigValues.limiteBytesContextoEditorAutomatico = 100;
+  mockVscode.window.activeTextEditor = makeEditor({
+    fsPath: '/proj/src/big.ts',
+    fileText: 'x'.repeat(500),
+    selText: '',
+  });
+  const r = automaticEditorContext();
+  assert.ok(r, 'deve retornar objeto');
+  assert.ok(r.label.includes('(truncado)'), 'label deve ter (truncado): ' + r.label);
+  assert.ok(r.promptBlock.includes('[NOTA:'), 'deve ter nota de truncamento');
+  mockConfigValues.limiteBytesContextoEditorAutomatico = 200000;
+  mockVscode.window.activeTextEditor = null;
+});
+
+test('automaticEditorContext: modo=somente-selecao sem selecao → null', () => {
+  mockConfigValues.modoContextoEditorAutomatico = 'somente-selecao';
+  mockVscode.window.activeTextEditor = makeEditor({ selText: '', fileText: 'algo' });
+  const r = automaticEditorContext();
+  assert.strictEqual(r, null);
+  mockConfigValues.modoContextoEditorAutomatico = 'selecao-ou-arquivo';
+  mockVscode.window.activeTextEditor = null;
+});
+
+test('automaticEditorContext: modo=somente-selecao com selecao → retorna selecao', () => {
+  mockConfigValues.modoContextoEditorAutomatico = 'somente-selecao';
+  mockVscode.window.activeTextEditor = makeEditor({
+    fsPath: '/tmp/x.ts', selText: 'foo', startLine: 0, endLine: 0,
+  });
+  const r = automaticEditorContext();
+  assert.ok(r, 'deve retornar objeto');
+  assert.strictEqual(r.label, 'x.ts:1-1');
+  mockConfigValues.modoContextoEditorAutomatico = 'selecao-ou-arquivo';
+  mockVscode.window.activeTextEditor = null;
+});
+
+test('automaticEditorContext: modo=somente-arquivo sem selecao → retorna arquivo', () => {
+  mockConfigValues.modoContextoEditorAutomatico = 'somente-arquivo';
+  mockVscode.window.activeTextEditor = makeEditor({
+    fsPath: '/tmp/z.ts', selText: '', fileText: 'inteiro',
+  });
+  const r = automaticEditorContext();
+  assert.ok(r, 'deve retornar objeto');
+  assert.strictEqual(r.label, 'z.ts');
+  assert.ok(r.promptBlock.includes('inteiro'));
+  mockConfigValues.modoContextoEditorAutomatico = 'selecao-ou-arquivo';
+  mockVscode.window.activeTextEditor = null;
+});
+
+test('automaticEditorContext: modo=somente-arquivo com selecao → retorna arquivo (ignora selecao)', () => {
+  mockConfigValues.modoContextoEditorAutomatico = 'somente-arquivo';
+  mockVscode.window.activeTextEditor = makeEditor({
+    fsPath: '/tmp/y.ts', selText: 'ignorar', startLine: 2, endLine: 3,
+    fileText: 'arquivo todo aqui',
+  });
+  const r = automaticEditorContext();
+  assert.ok(r, 'deve retornar objeto');
+  assert.strictEqual(r.label, 'y.ts');
+  assert.ok(r.promptBlock.includes('arquivo todo aqui'));
+  mockConfigValues.modoContextoEditorAutomatico = 'selecao-ou-arquivo';
+  mockVscode.window.activeTextEditor = null;
 });
 
 // ── Teste: activate smoke ─────────────────────────────────────────────────────

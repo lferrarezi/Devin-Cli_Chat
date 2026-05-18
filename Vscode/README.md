@@ -1,6 +1,6 @@
 # Devin Cli Chat — VS Code
 
-> **1.0.0-rc.1 — Release Candidate.** Esta versão é estável para uso, mas ainda não é a release final 1.0.  
+> **1.0.0-rc.2 — Release Candidate.** Esta versão é estável para uso, mas ainda não é a release final 1.0.  
 > Reporte problemas em [Issues](https://github.com/lferrarezi/Devin-Cli_Chat/issues) antes da release oficial.
 
 Painel de chat nativo para o **Devin CLI** dentro do VS Code.  
@@ -55,6 +55,20 @@ Valores inválidos são convertidos para `auto` automaticamente.
 - **i** (botão no cabeçalho): verifica se o Devin CLI está acessível sem sair do painel lateral.
 
 Durante respostas longas, use o botão **×** para solicitar cancelamento; use **i** no cabeçalho para verificar o Devin CLI.
+
+## Contexto automático do editor
+
+Quando habilitado, o chat inclui automaticamente a seleção ativa ou, se não houver seleção, o arquivo aberto como contexto da pergunta. Se houver anexos manuais, o contexto automático não é adicionado para evitar duplicidade.
+
+Uma referência compacta aparece na bolha do usuário: `📄 Contexto automático: arquivo.ts:10-25`.
+
+Configurações:
+
+| Configuração | Tipo | Padrão | Descrição |
+|---|---|---|---|
+| `devinCliChat.usarContextoEditorAutomatico` | boolean | `true` | Habilita/desabilita o contexto automático |
+| `devinCliChat.limiteBytesContextoEditorAutomatico` | number | `200000` | Limite de bytes do arquivo. Arquivos maiores são truncados com aviso |
+| `devinCliChat.modoContextoEditorAutomatico` | enum | `selecao-ou-arquivo` | `selecao-ou-arquivo`: usa seleção quando houver, senão arquivo; `somente-selecao`: só seleção; `somente-arquivo`: só arquivo aberto; `desativado`: nunca usa contexto automático |
 
 ## Log de diagnóstico
 
@@ -174,6 +188,6 @@ Se algo não funcionar conforme esperado nesta RC, abra uma issue com logs do Ou
 
 ---
 
-## Versão atual: 1.0.0-rc.1
+## Versão atual: 1.0.0-rc.2
 
 Veja o [CHANGELOG](CHANGELOG.md) para histórico completo.

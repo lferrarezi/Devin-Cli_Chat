@@ -501,6 +501,70 @@ function buildSelectionPayload(editor) {
         label: `${base}:${startLine}-${endLine}`
     };
 }
+function automaticEditorContext() {
+    try {
+        const enabled = cfg().get('usarContextoEditorAutomatico');
+        if (enabled === false)
+            return null;
+        const mode = String(cfg().get('modoContextoEditorAutomatico') || 'selecao-ou-arquivo');
+        if (mode === 'desativado')
+            return null;
+        const editor = vscode.window.activeTextEditor;
+        if (!editor)
+            return null;
+        const doc = editor.document;
+        if (!doc || !doc.uri || doc.uri.scheme !== 'file')
+            return null;
+        const file = doc.uri.fsPath;
+        const base = path.basename(file);
+        const lang = doc.languageId || path.extname(file).slice(1) || '';
+        const fence = '```';
+        const sel = editor.selection;
+        const hasSelection = !!(sel && !sel.isEmpty);
+        if (mode !== 'somente-arquivo' && hasSelection) {
+            const text = doc.getText(sel);
+            if (!text || !text.trim())
+                return null;
+            const startLine = sel.start.line + 1;
+            const endLine = sel.end.line + 1;
+            const label = `${base}:${startLine}-${endLine}`;
+            const promptBlock = [
+                '',
+                '',
+                `[Contexto automatico do editor: ${label}]`,
+                fence + lang,
+                text,
+                fence
+            ].join('\n');
+            return { label, promptBlock };
+        }
+        if (mode === 'somente-selecao')
+            return null;
+        const full = doc.getText();
+        if (!full || !full.trim())
+            return null;
+        const limitCfg = Number(cfg().get('limiteBytesContextoEditorAutomatico'));
+        const maxBytes = Number.isFinite(limitCfg) && limitCfg > 0 ? limitCfg : 200000;
+        const fullBuf = Buffer.from(full, 'utf8');
+        const truncated = fullBuf.length > maxBytes;
+        const body = truncated ? fullBuf.subarray(0, maxBytes).toString('utf8') : full;
+        const label = truncated ? `${base} (truncado)` : base;
+        const lines = [
+            '',
+            '',
+            `[Contexto automatico do editor: ${label}]`,
+            fence + lang,
+            body,
+            fence
+        ];
+        if (truncated)
+            lines.push(`[NOTA: arquivo truncado em ${maxBytes} bytes para limitar o tamanho do contexto automatico.]`);
+        return { label, promptBlock: lines.join('\n') };
+    }
+    catch (_) {
+        return null;
+    }
+}
 function gitDiff() {
     try {
         return cp.execFileSync('git', ['diff', '--no-ext-diff'], {
@@ -675,7 +739,7 @@ class ChatViewProvider {
                     return;
                 }
                 if (type === 'send') {
-                    await this.send(message.text || '', { echoUser: message.echo !== false, displayText: message.displayText || message.text || '' });
+                    await this.send(message.text || '', { echoUser: message.echo !== false, displayText: message.displayText || message.text || '', hasExplicitContext: !!message.hasExplicitContext });
                     return;
                 }
                 if (type === 'terminal') {
@@ -1169,10 +1233,19 @@ class ChatViewProvider {
         this.post(payload);
     }
     async send(text, options) {
-        const prompt = String(text || '').trim();
+        let prompt = String(text || '').trim();
         if (!prompt)
             return;
-        const displayPrompt = String(options && options.displayText ? options.displayText : prompt).trim();
+        let displayPrompt = String(options && options.displayText ? options.displayText : prompt).trim();
+        let autoCtxLabel = null;
+        if (!options || !options.hasExplicitContext) {
+            const auto = automaticEditorContext();
+            if (auto && auto.promptBlock) {
+                prompt = prompt + auto.promptBlock;
+                displayPrompt = displayPrompt + '\n\n[Contexto automatico: ' + auto.label + ']';
+                autoCtxLabel = auto.label;
+            }
+        }
         if (this.busy) {
             this.post({ type: 'message', role: 'assistant', text: 'Ja existe uma execucao em andamento. A concorrencia permanece controlada no backend.' });
             return;
@@ -1185,6 +1258,8 @@ class ChatViewProvider {
             this.post({ type: 'message', role: 'user', text: displayPrompt });
         this.session.messages.push({ role: 'user', text: displayPrompt, fullText: prompt, ts: Date.now(), tokens: inTokens });
         this.post({ type: 'busy', value: true });
+        if (autoCtxLabel)
+            this.post({ type: 'ctxHint', text: '📄 Contexto automatico: ' + autoCtxLabel });
         this.post({ type: 'action', ok: true, text: 'Enviando para o Devin CLI...' });
         this.refreshMeta();
         try {
@@ -1282,7 +1357,7 @@ button,select,textarea{font:inherit;color:inherit}
 .msg{max-width:92%;line-height:1.48;white-space:pre-wrap;overflow-wrap:anywhere}
 .msg.assistant{width:100%}
 .msg.user{background:var(--input);border:1px solid var(--border);border-radius:16px;padding:9px 12px;max-width:82%}
-.msgMeta{font-size:11px;color:var(--muted);margin-bottom:4px}
+.msgMeta{font-size:11px;color:var(--muted);margin-bottom:4px}.autoCtxHint{font-size:11px;color:var(--muted);margin-top:4px;opacity:.85}
 .msg pre{background:var(--code);border:1px solid var(--border);border-radius:8px;padding:10px;overflow:auto;white-space:pre-wrap}
 .composerWrap{border-top:1px solid var(--border);background:var(--bg);padding:10px;position:relative}
 .composer{border:1px solid var(--border);background:var(--input);border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
@@ -1599,6 +1674,7 @@ function sendPrompt(value){
   var basePrompt = txt(value).trim();
   if(!basePrompt){ return; }
   if(!META.hasMessages && !META.model){ var mg = byId('modelGate'); if(mg) mg.classList.add('show'); return; }
+  var hasExplicitContext = attachedItems.length > 0;
   var refs = attachedItems.map(attachmentReference).filter(Boolean);
   var displayText = basePrompt + (refs.length ? '\\n\\n' + refs.join(', ') : '');
   var fullText = basePrompt + attachedItems.map(attachmentFullBlock).join('');
@@ -1607,7 +1683,7 @@ function sendPrompt(value){
   attachedItems = [];
   renderContextChips();
   setBusy(true);
-  post({ type: 'send', text: fullText, displayText: displayText, echo: false });
+  post({ type: 'send', text: fullText, displayText: displayText, echo: false, hasExplicitContext: hasExplicitContext });
 }
 
 
@@ -1937,6 +2013,22 @@ window.addEventListener('message', function(ev){
     updateGate(); updateTokens();
   }
   if(m.type === 'message') addMessage(m.role || 'assistant', m.text || '');
+  if(m.type === 'ctxHint'){
+    var thread2 = byId('thread');
+    if(thread2){
+      var rows2 = thread2.querySelectorAll('.msgRow.user');
+      var last2 = rows2.length ? rows2[rows2.length - 1] : null;
+      if(last2){
+        var bubble2 = last2.querySelector('.msg.user');
+        var host2 = bubble2 || last2;
+        var hint2 = document.createElement('div');
+        hint2.className = 'autoCtxHint';
+        hint2.textContent = m.text || '';
+        host2.appendChild(hint2);
+        thread2.scrollTop = thread2.scrollHeight;
+      }
+    }
+  }
   if(m.type === 'busy') setBusy(!!m.value);
   if(m.type === 'insertPrompt') appendPrompt(m.text || '');
   if(m.type === 'history') renderHistory(m.sessions || []);
@@ -2062,5 +2154,5 @@ function deactivate() {
 module.exports = {
     activate,
     deactivate,
-    _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun }
+    _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun, automaticEditorContext }
 };

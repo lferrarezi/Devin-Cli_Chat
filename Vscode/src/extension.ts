@@ -1840,5 +1840,5 @@ function deactivate() {}
 module.exports = {
   activate,
   deactivate,
-  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, loadHistory, saveHistory }
+  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun }
 };

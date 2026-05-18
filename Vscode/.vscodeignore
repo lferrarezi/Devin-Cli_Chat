@@ -3,3 +3,7 @@
 _old/**
 source/**
 VERSION_0.29_ANALISE.md
+scripts/**
+test/**
+RELEASE_CHECKLIST.md
+docs/**

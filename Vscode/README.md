@@ -81,6 +81,10 @@ npm install
 |---|---|
 | `npm run compile` | Compila TypeScript → `out/extension.js` |
 | `npm run watch` | Compila em modo watch |
+| `npm run test` | Roda suite de testes unitários (`test/unit.js`) |
+| `npm run validate:webview` | Valida sintaxe e CSP do script embutido da webview |
+| `npm run validate:vsix` | Valida estrutura e conteúdo do VSIX gerado |
+| `npm run release:check` | Compila + valida webview + roda testes (gate único antes do package) |
 | `npm run package` | Gera o VSIX (`devin-cli-chat-X.Y.Z.vsix`) |
 
 ### Testar em desenvolvimento
@@ -102,6 +106,6 @@ Vscode/
 
 ---
 
-## Versão atual: 0.36.1
+## Versão atual: 0.37.0
 
 Veja o [CHANGELOG](CHANGELOG.md) para histórico completo.

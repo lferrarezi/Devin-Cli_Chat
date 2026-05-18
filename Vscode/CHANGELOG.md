@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.37.0
+
+- Adiciona `scripts/validate-webview.js`: valida sintaxe do JavaScript embutido, CSP, delegação de cliques e marcadores obrigatórios — impede regressão como "painel abre sem botões".
+- Adiciona `scripts/validate-vsix.js`: valida estrutura do VSIX, arquivos obrigatórios, ausência de `node_modules/` e `source/`, versão interna e tamanho.
+- Adiciona `test/unit.js`: 43 testes unitários para `sanitizeModel`, `isSafeModelId`, `baseArgs` (incluindo que `auto` não envia `--model`), `fullPrompt`, `modelsForUi`, `scanAgents`, `scanSkills` e sintaxe do script da webview.
+- Adiciona scripts `test`, `validate:webview`, `validate:vsix` e `release:check` em `package.json`.
+- Cria `RELEASE_CHECKLIST.md` com checklist de build, versionamento, empacotamento, smoke test e troubleshooting.
+- Expõe `sanitizeModel`, `isSafeModelId` e `cancelIntegratedRun` em `_internal` para uso nos testes.
+- Adiciona `scripts/`, `test/`, `RELEASE_CHECKLIST.md` e `docs/` ao `.vscodeignore`.
+
 ## 0.36.1
 
 - Corrige bug crítico: escapes `\n` dentro do bloco `<script>` da webview eram injetados como quebras de linha reais, causando `SyntaxError` e impedindo todos os botões de responder.

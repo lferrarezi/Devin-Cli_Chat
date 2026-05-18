@@ -102,6 +102,6 @@ Vscode/
 
 ---
 
-## Versão atual: 0.36.0
+## Versão atual: 0.36.1
 
 Veja o [CHANGELOG](CHANGELOG.md) para histórico completo.

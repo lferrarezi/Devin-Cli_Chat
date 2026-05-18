@@ -1469,7 +1469,7 @@ function fmtTok(n){
 }
 function attachmentTextForTokens(item){
   if(!item) return '';
-  if(item.type === 'folder' && item.files){ return item.files.map(function(f){ return f.text || ''; }).join('\n'); }
+  if(item.type === 'folder' && item.files){ return item.files.map(function(f){ return f.text || ''; }).join('\\n'); }
   return item.text || '';
 }
 function updateTokens(){
@@ -1533,15 +1533,15 @@ function attachmentFullBlock(item){
   var fence = String.fromCharCode(96,96,96);
   if(item.type === 'folder'){
     var files = item.files || [];
-    var truncNote = item.truncated ? '\n\n[NOTA: pasta truncada — exibindo ' + files.length + ' arquivo(s); demais arquivos ignorados por limite ou por serem muito grandes (>1 MB).]' : '';
+    var truncNote = item.truncated ? '\\n\\n[NOTA: pasta truncada — exibindo ' + files.length + ' arquivo(s); demais arquivos ignorados por limite ou por serem muito grandes (>1 MB).]' : '';
     return files.map(function(f){
       var lang = f.language || '';
-      return '\n\nArquivo anexado ' + (f.rel || f.file || f.base || 'arquivo') + ' (' + lang + '):\n' + fence + lang + '\n' + (f.text || '') + '\n' + fence;
+      return '\\n\\nArquivo anexado ' + (f.rel || f.file || f.base || 'arquivo') + ' (' + lang + '):\\n' + fence + lang + '\\n' + (f.text || '') + '\\n' + fence;
     }).join('') + truncNote;
   }
   var heading = item.type === 'file' ? ('Arquivo anexado ' + (item.file || item.label)) : ('Contexto anexado de ' + item.label);
-  var fileTruncNote = item.truncated ? '\n[NOTA: arquivo truncado — exibindo apenas os primeiros bytes por limite de tamanho.]' : '';
-  return '\n\n' + heading + ' (' + (item.language||'') + '):\n' + fence + (item.language||'') + '\n' + (item.text || '') + '\n' + fence + fileTruncNote;
+  var fileTruncNote = item.truncated ? '\\n[NOTA: arquivo truncado — exibindo apenas os primeiros bytes por limite de tamanho.]' : '';
+  return '\\n\\n' + heading + ' (' + (item.language||'') + '):\\n' + fence + (item.language||'') + '\\n' + (item.text || '') + '\\n' + fence + fileTruncNote;
 }
 
 function renderContextChips(){
@@ -1596,7 +1596,7 @@ function sendPrompt(value){
   if(!basePrompt){ return; }
   if(!META.hasMessages && !META.model){ var mg = byId('modelGate'); if(mg) mg.classList.add('show'); return; }
   var refs = attachedItems.map(attachmentReference).filter(Boolean);
-  var displayText = basePrompt + (refs.length ? '\n\n' + refs.join(', ') : '');
+  var displayText = basePrompt + (refs.length ? '\\n\\n' + refs.join(', ') : '');
   var fullText = basePrompt + attachedItems.map(attachmentFullBlock).join('');
   addMessage('user', displayText);
   setPrompt('');

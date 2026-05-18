@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.36.1
+
+- Corrige bug crítico: escapes `\n` dentro do bloco `<script>` da webview eram injetados como quebras de linha reais, causando `SyntaxError` e impedindo todos os botões de responder.
+- Funções afetadas: `attachmentTextForTokens`, `attachmentFullBlock` e `sendPrompt` — todas as ocorrências de `'\n'` e `'\n\n'` convertidas para `'\\n'` e `'\\n\\n'`.
+
 ## 0.36.0
 
 - Performance: cache de modelos (TTL configurável `cacheModelosMs`, padrão 30 min), agentes e skills (TTL 10 s) para reduzir leituras síncronas repetidas no refresh do painel.

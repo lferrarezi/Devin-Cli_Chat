@@ -7,7 +7,7 @@ const os = require('os');
 const cp = require('child_process');
 const EXT = 'devinCliChat';
 const VALID_MODELS = ['auto', 'sonnet', 'opus', 'swe', 'gpt'];
-const FALLBACK_MODELS = VALID_MODELS;
+const FALLBACK_MODELS = ['auto', 'adaptive', 'sonnet', 'opus', 'swe', 'gpt', 'codex'];
 const HISTORY_KEY = 'devinCliChat.chatHistory.v1';
 const MAX_HISTORY = 50;
 const MAX_ATTACHMENT_BYTES = 1024 * 1024;
@@ -17,10 +17,25 @@ let provider;
 let statusBar;
 let extContext;
 let outputChannel;
+let activeChild;
+let cancelRequested = false;
+let modelCache = { at: 0, values: undefined };
+let agentsCache = { at: 0, values: undefined };
+let skillsCache = { at: 0, values: undefined };
 function log(msg) {
     const ts = new Date().toISOString();
     if (outputChannel)
         outputChannel.appendLine(`[${ts}] ${msg}`);
+}
+function metadataCacheMs() { return 10000; }
+function modelCacheMs() { return Math.max(0, Number(cfg().get('cacheModelosMs') || 1800000)); }
+function invalidateMetaCache() {
+    modelCache = { at: 0, values: undefined };
+    agentsCache = { at: 0, values: undefined };
+    skillsCache = { at: 0, values: undefined };
+}
+function isSafeModelId(value) {
+    return /^[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}$/.test(String(value || '').trim());
 }
 function cfg() { return vscode.workspace.getConfiguration(EXT); }
 function workspaceRoot() {
@@ -67,10 +82,10 @@ function sanitizeModel(value) {
     const s = String(value || '').trim().toLowerCase();
     if (!s || s === 'default' || s === 'padrao' || s === 'padrão')
         return 'auto';
-    return VALID_MODELS.includes(s) ? s : 'auto';
+    return isSafeModelId(s) ? s : 'auto';
 }
 function normalizeModel(value) { return sanitizeModel(value); }
-function validModelsForUi() { return [...VALID_MODELS]; }
+function validModelsForUi() { return [...FALLBACK_MODELS]; }
 function readJson(filePath) {
     try {
         if (!exists(filePath))
@@ -126,7 +141,7 @@ function baseArgs() {
     const out = [...(cfg().get('argumentosPadrao') || []).map(String).filter(Boolean)];
     const modelFlag = String(cfg().get('argumentoModelo') || '').trim();
     const selectedModel = modelForCli();
-    if (modelFlag && selectedModel)
+    if (modelFlag && selectedModel && selectedModel !== 'auto')
         out.push(modelFlag, selectedModel);
     return out;
 }
@@ -202,8 +217,22 @@ function openTerminal(text) {
     terminal.show(true);
     terminal.sendText(terminalCommand(text));
 }
+function cancelIntegratedRun() {
+    cancelRequested = true;
+    if (!activeChild || activeChild.killed)
+        return false;
+    try {
+        activeChild.kill();
+        return true;
+    }
+    catch (err) {
+        log(`cancelIntegratedRun erro: ${err && err.message ? err.message : String(err)}`);
+        return false;
+    }
+}
 function runIntegrated(text) {
     return new Promise((resolve) => {
+        cancelRequested = false;
         const args = [...baseArgs(), '-p', '--', fullPrompt(text)];
         log(`runIntegrated: ${devinPath()} ${args.slice(0, -1).join(' ')} -- [prompt ${fullPrompt(text).length} chars]`);
         log(`  cwd: ${defaultCwd()}`);
@@ -212,16 +241,20 @@ function runIntegrated(text) {
             if (settled)
                 return;
             settled = true;
+            activeChild = undefined;
             resolve(value);
         }
-        let child;
         try {
-            child = cp.execFile(devinPath(), args, {
+            activeChild = cp.execFile(devinPath(), args, {
                 cwd: defaultCwd(),
                 timeout: Number(cfg().get('timeoutChatMs') || 300000),
                 maxBuffer: 1024 * 1024 * 16,
                 windowsHide: true
             }, (err, stdout, stderr) => {
+                if (cancelRequested) {
+                    done('Execucao cancelada pelo usuario.');
+                    return;
+                }
                 if (err)
                     log(`runIntegrated erro: code=${err.code} signal=${err.signal} killed=${err.killed} msg=${err.message}`);
                 if (stderr && stderr.trim())
@@ -234,8 +267,12 @@ function runIntegrated(text) {
                 }
                 done(friendlyCliOutput(stdout, stderr, err));
             });
-            child.on('error', (err) => {
+            activeChild.on('error', (err) => {
                 log(`runIntegrated child error: ${err.message}`);
+                if (cancelRequested) {
+                    done('Execucao cancelada pelo usuario.');
+                    return;
+                }
                 if (process.platform === 'win32')
                     runIntegratedViaBash(text, err).then(done);
                 else
@@ -244,6 +281,10 @@ function runIntegrated(text) {
         }
         catch (err) {
             log(`runIntegrated catch: ${err.message}`);
+            if (cancelRequested) {
+                done('Execucao cancelada pelo usuario.');
+                return;
+            }
             if (process.platform === 'win32')
                 runIntegratedViaBash(text, err).then(done);
             else
@@ -260,12 +301,17 @@ function runIntegratedViaBash(text, firstError) {
         }
         const args = baseArgs().map(shellQuote).join(' ');
         const command = `${shellQuote(devinPath())} ${args} -p -- ${shellQuote(fullPrompt(text))}`;
-        cp.exec(command, {
+        activeChild = cp.exec(command, {
             cwd: defaultCwd(),
             shell: bash,
             timeout: Number(cfg().get('timeoutChatMs') || 300000),
             maxBuffer: 1024 * 1024 * 16
         }, (err, stdout, stderr) => {
+            activeChild = undefined;
+            if (cancelRequested) {
+                resolve('Execucao cancelada pelo usuario.');
+                return;
+            }
             const output = friendlyCliOutput(stdout, stderr, err);
             resolve(output.replace('Falha ao executar Devin CLI:', 'Falha ao executar Devin CLI via Git Bash:'));
         });
@@ -273,6 +319,7 @@ function runIntegratedViaBash(text, firstError) {
 }
 async function setConfig(key, value) {
     await cfg().update(key, value, vscode.ConfigurationTarget.Workspace);
+    invalidateMetaCache();
     updateStatusBar();
     if (provider)
         provider.refreshMeta();
@@ -354,12 +401,21 @@ function discoverModelsFromCli() {
     });
 }
 function modelsForUi() {
+    const ttl = modelCacheMs();
+    const now = Date.now();
+    if (ttl > 0 && modelCache.values && now - modelCache.at < ttl)
+        return modelCache.values;
     const values = [configuredModel(), readCurrentModelFromDevinConfig(), ...manualModels(), ...readModelsFromCaches(), ...validModelsForUi()]
         .map(sanitizeModel)
         .filter(Boolean);
-    return Array.from(new Set([...validModelsForUi(), ...values]));
+    const result = Array.from(new Set([...validModelsForUi(), ...values]));
+    modelCache = { at: now, values: result };
+    return result;
 }
 function scanAgents() {
+    const now = Date.now();
+    if (agentsCache.values && now - agentsCache.at < metadataCacheMs())
+        return agentsCache.values;
     const dirs = [
         resolveMaybe(cfg().get('diretorioAgentesWorkspace') || '.devin/agents'),
         resolveMaybe(cfg().get('diretorioAgentesGlobal') || '~/.config/devin/agents')
@@ -377,9 +433,14 @@ function scanAgents() {
         }
         catch (_) { }
     }
-    return Array.from(new Set(out));
+    const result = Array.from(new Set(out));
+    agentsCache = { at: now, values: result };
+    return result;
 }
 function scanSkills() {
+    const now = Date.now();
+    if (skillsCache.values && now - skillsCache.at < metadataCacheMs())
+        return skillsCache.values;
     const dirs = [
         resolveMaybe(cfg().get('diretorioSkillsWorkspace') || '.devin/skills'),
         resolveMaybe(cfg().get('diretorioSkillsGlobal') || '~/.config/devin/skills'),
@@ -399,7 +460,9 @@ function scanSkills() {
         }
         catch (_) { }
     }
-    return Array.from(new Set(out)).sort();
+    const result = Array.from(new Set(out)).sort();
+    skillsCache = { at: now, values: result };
+    return result;
 }
 function activeContext() {
     const editor = vscode.window.activeTextEditor;
@@ -569,6 +632,20 @@ class ChatViewProvider {
                     this.pushCurrentSelection();
                     return;
                 }
+                if (type === 'clientError') {
+                    log(`ERRO no cliente webview: ${message.text || 'sem detalhes'}`);
+                    this.post({ type: 'message', role: 'assistant', text: 'Falha no painel: ' + (message.text || 'erro sem detalhes') });
+                    return;
+                }
+                if (type === 'cancelRun') {
+                    const ok = cancelIntegratedRun();
+                    this.post({ type: 'action', ok, text: ok ? 'Cancelamento solicitado.' : 'Nenhuma execucao integrada ativa para cancelar.' });
+                    return;
+                }
+                if (type === 'verifyCli') {
+                    this.verifyCli();
+                    return;
+                }
                 if (type === 'requestSelection') {
                     this.pushCurrentSelection(true);
                     return;
@@ -720,6 +797,24 @@ class ChatViewProvider {
         const sessions = loadHistory().filter(s => s && s.messages && s.messages.length);
         this.post({ type: 'openHistory', sessions });
         this.refreshMeta();
+    }
+    verifyCli() {
+        outputChannel.show(true);
+        log(`Verificando Devin CLI pelo painel: ${devinPath()}`);
+        cp.execFile(devinPath(), ['--version'], { cwd: defaultCwd(), windowsHide: true }, (err, stdout, stderr) => {
+            if (err) {
+                const text = `Falha ao verificar Devin CLI: ${err.message}`;
+                log(text);
+                this.post({ type: 'message', role: 'assistant', text });
+                this.post({ type: 'action', ok: false, text });
+                return;
+            }
+            const version = (stdout || stderr || 'ok').trim();
+            const text = `Devin CLI encontrado: ${version}`;
+            log(text);
+            this.post({ type: 'message', role: 'assistant', text });
+            this.post({ type: 'action', ok: true, text });
+        });
     }
     pushCurrentSelection(force) {
         const editor = vscode.window.activeTextEditor;
@@ -1224,6 +1319,8 @@ textarea{width:100%;min-height:62px;max-height:200px;resize:none;background:tran
 .menu.browser .rowBtn:hover{background:var(--hover);color:var(--fg)}
 .busyDot{display:none;width:7px;height:7px;border-radius:999px;background:var(--accent);animation:pulse 1s infinite;flex:0 0 auto}
 .is-busy .busyDot{display:block}.is-busy .sendBtn{opacity:.55}
+.stopBtn{display:none;width:28px;height:28px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--fg);cursor:pointer;place-items:center;flex:0 0 auto;font-size:16px;line-height:1}
+.is-busy .stopBtn{display:grid}
 @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
 .sendBtn{width:28px;height:28px;border-radius:8px;border:0;background:var(--accent);color:var(--accent-fg);cursor:pointer;display:grid;place-items:center;flex:0 0 auto}
 .sendBtn:disabled{opacity:.5}
@@ -1279,6 +1376,7 @@ body.narrow .modelLockBadge.show span{display:none}
   <button type="button" class="iconBtn" data-action="toggleHistory" title="Historico">${ICONS.history}</button>
   <button type="button" class="iconBtn" data-action="newChat" title="Nova conversa">${ICONS.plus}</button>
   <button type="button" class="iconBtn" data-action="refreshModels" title="Atualizar modelos">${ICONS.refresh}</button>
+  <button type="button" class="iconBtn" data-action="verifyCli" title="Verificar Devin CLI">i</button>
   <button type="button" class="iconBtn" data-action="terminal" title="Abrir sessao no terminal">${ICONS.terminal}</button>
 </header>
 <div id="historyPanel" class="panel"><header>Historico <div class="barSpacer"></div><button data-action="clearHistory">Limpar</button></header><div id="historyList"></div></div>
@@ -1312,6 +1410,7 @@ body.narrow .modelLockBadge.show span{display:none}
       <span class="barSpacer"></span>
       <span class="busyDot"></span>
       <span class="tokenPie" id="tokenPie" title="Tokens"></span>
+      <button class="stopBtn" id="cancel" type="button" data-action="cancelRun" title="Cancelar execucao">×</button>
       <button class="sendBtn" id="send" type="button" data-action="send" title="Enviar">${ICONS.send}</button>
     </div>
   </div>
@@ -1757,6 +1856,12 @@ function renderBrowser(payload){
   }
 }
 
+function clientError(context, err){
+  var msg = err && err.message ? err.message : String(err || 'erro desconhecido');
+  try { console.error(context, err); } catch(_){}
+  try { post({ type: 'clientError', text: context + ': ' + msg }); } catch(_){}
+}
+
 function action(name, element){
   if(name === 'send') return sendPrompt(getPrompt());
   if(name === 'newChat'){ post({ type: 'newChat' }); return; }
@@ -1772,6 +1877,8 @@ function action(name, element){
   if(name === 'openAgentMenu') return openAgentMenu();
   if(name === 'openModeMenu') return openModeMenu();
   if(name === 'attachMenu') return post({ type: 'attachMenu' });
+  if(name === 'verifyCli') return post({ type: 'verifyCli' });
+  if(name === 'cancelRun') return post({ type: 'cancelRun' });
 }
 
 document.addEventListener('click', function(e){
@@ -1779,7 +1886,7 @@ document.addEventListener('click', function(e){
   if(!b){ if(!e.target.closest('.menu')) closeAllMenus(); return; }
   e.preventDefault();
   closeAllMenus();
-  try { action(b.getAttribute('data-action'), b); } catch(err){}
+  try { action(b.getAttribute('data-action'), b); } catch(err){ clientError('acao ' + b.getAttribute('data-action'), err); }
 });
 
 var pe = byId('prompt');
@@ -1794,6 +1901,8 @@ function applyResponsive(){
 }
 window.addEventListener('resize', applyResponsive);
 applyResponsive();
+window.addEventListener('error', function(ev){ clientError('erro no webview', ev.error || ev.message); });
+window.addEventListener('unhandledrejection', function(ev){ clientError('promise rejeitada no webview', ev.reason || 'sem motivo'); });
 
 window.addEventListener('message', function(ev){
   var m = ev.data || {};
@@ -1870,12 +1979,14 @@ async function activate(context) {
     context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarModelo', pickModel));
     context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.definirModeloManual', pickManualModel));
     context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.atualizarModelos', async () => {
+        invalidateMetaCache();
         if (provider)
             provider.refreshMeta();
         const extra = await discoverModelsFromCli();
         if (extra.length) {
             const merged = Array.from(new Set([...(cfg().get('modelosDisponiveis') || []), ...extra]));
             await cfg().update('modelosDisponiveis', merged, vscode.ConfigurationTarget.Workspace);
+            invalidateMetaCache();
         }
         if (provider)
             provider.refreshMeta();
@@ -1929,6 +2040,7 @@ async function activate(context) {
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(fireSelection));
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration(EXT)) {
+            invalidateMetaCache();
             updateStatusBar();
             if (provider)
                 provider.refreshMeta();

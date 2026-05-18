@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.36.0
+
+- Performance: cache de modelos (TTL configurável `cacheModelosMs`, padrão 30 min), agentes e skills (TTL 10 s) para reduzir leituras síncronas repetidas no refresh do painel.
+- Novo botão **i** no cabeçalho do painel para verificar o Devin CLI sem sair da interface lateral.
+- Novo botão **×** no compositor: aparece durante execuções integradas longas e solicita cancelamento.
+- `auto` agora omite `--model` — o Devin CLI usa o padrão local configurado.
+- `invalidateMetaCache()` chamado ao alterar configuração, executar refresh de modelos ou salvar configuração via `setConfig()`.
+
+## 0.35.1
+
+- Corrige JavaScript do webview: todos os botões do painel lateral agora funcionam via delegação `data-action`.
+- `auto` passa a omitir `--model`, deixando o Devin CLI escolher o padrão local.
+- Logging de erros do cliente webview: `window.onerror` e `unhandledrejection` são capturados e registrados no Output Channel `Devin Cli Chat`.
+
 ## 0.35.0
 
 - Indicação de truncamento no prompt: pastas e arquivos truncados por limite de tamanho exibem nota explicativa enviada ao Devin CLI.

@@ -30,7 +30,8 @@ Interface em português brasileiro com suporte a modelos, agentes, skills, anexo
 
 ## Modelos válidos
 
-Aliases aceitos pelo Devin CLI: `auto`, `sonnet`, `opus`, `swe`, `gpt`.  
+Use `auto` para deixar o Devin CLI escolher o modelo padrão — nesse caso a extensão não envia `--model`.  
+Outros aliases aceitos: `sonnet`, `opus`, `swe`, `gpt`, `codex`, `adaptive`.  
 Valores inválidos são convertidos para `auto` automaticamente.
 
 ## Diretórios padrão
@@ -44,6 +45,13 @@ Valores inválidos são convertidos para `auto` automaticamente.
 
 - **Integrado** (`resposta-integrada`): executa `devin -p` e exibe a resposta no chat.
 - **Terminal**: abre o terminal integrado com o comando pronto.
+
+## Controles do painel
+
+- **×** (botão no compositor): aparece durante execuções longas — clique para solicitar cancelamento. A resposta será `Execucao cancelada pelo usuario.`
+- **i** (botão no cabeçalho): verifica se o Devin CLI está acessível sem sair do painel lateral.
+
+Durante respostas longas, use o botão **×** para solicitar cancelamento; use **i** no cabeçalho para verificar o Devin CLI.
 
 ## Log de diagnóstico
 
@@ -94,6 +102,6 @@ Vscode/
 
 ---
 
-## Versão atual: 0.34.1
+## Versão atual: 0.36.0
 
 Veja o [CHANGELOG](CHANGELOG.md) para histórico completo.

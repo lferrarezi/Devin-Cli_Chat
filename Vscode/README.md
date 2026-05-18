@@ -60,6 +60,57 @@ Ou execute `Devin Cli Chat: Verificar Devin CLI` na Command Palette — o Output
 
 ---
 
+## Solução de problemas
+
+### Painel abre, mas botões não respondem
+
+1. Abra **Developer: Toggle Developer Tools** (`Ctrl+Shift+I`).
+2. Verifique a aba **Console** por erros `SyntaxError` ou `ReferenceError`.
+3. Verifique `View → Output → Devin Cli Chat` por erros do host.
+4. Reinstale o VSIX com `--force`: `code --install-extension devin-cli-chat-X.Y.Z.vsix --force`.
+5. Execute **Developer: Reload Window**.
+6. Se persistir, abra uma issue em https://github.com/lferrarezi/Devin-Cli_Chat/issues com o log.
+
+> Esta release inclui validação automática do script da webview que impede regressões desse tipo.
+
+### Devin CLI não encontrado
+
+1. Execute **Devin Cli Chat: Verificar Devin CLI** na Command Palette — o Output abre automaticamente.
+2. Configure o caminho completo em `devinCliChat.caminhoDevin` (ex.: `/usr/local/bin/devin`).
+3. Verifique se o executável está no PATH: abra o terminal integrado e execute `devin --version`.
+4. No Windows com Git Bash, configure `devinCliChat.gitBashPath` ou `devinCliChat.usarGitBashNoWindows`.
+
+### Modelo não reconhecido
+
+1. Use `auto` — a extensão não envia `--model` e o Devin CLI usa o padrão local.
+2. Execute **Devin Cli Chat: Atualizar modelos** para redescobrir modelos disponíveis.
+3. Use **Devin Cli Chat: Definir modelo manual** para inserir um alias fora da lista padrão.
+4. Verifique se o alias é aceito pelo seu Devin CLI com `devin model set <alias>` no terminal.
+
+### Resposta não aparece no chat
+
+1. Verifique o modo de execução — se for **Terminal**, a resposta não volta para o chat.
+2. Aguarde o timeout (padrão 5 min) ou aumente `devinCliChat.timeoutChatMs`.
+3. Verifique `View → Output → Devin Cli Chat` por erros de execução.
+4. Confirme que `devinCliChat.caminhoDevin` aponta para o executável correto.
+
+### Anexos não funcionam
+
+1. Arquivos > 1 MB são ignorados — use pasta com arquivos menores.
+2. Diretórios como `node_modules`, `.git`, `dist`, `build` são excluídos automaticamente.
+3. É necessário ter uma pasta aberta no VS Code para o browser de workspace funcionar.
+4. Para arquivos fora do workspace, use o botão **disco...** no browser de arquivos.
+
+---
+
+## Segurança
+
+Esta extensão executa o Devin CLI localmente e não coleta dados. Arquivos anexados são incluídos no prompt enviado ao CLI — revise antes de enviar conteúdo sensível.
+
+Consulte [SECURITY.md](SECURITY.md) para detalhes sobre CSP, logging, execução do CLI e modelo de ameaças.
+
+---
+
 ## Desenvolvimento
 
 ### Pré-requisitos
@@ -106,6 +157,6 @@ Vscode/
 
 ---
 
-## Versão atual: 0.37.0
+## Versão atual: 0.38.0
 
 Veja o [CHANGELOG](CHANGELOG.md) para histórico completo.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.38.0
+
+- Corrige 4 ocorrências de `innerHTML` com dados controlados por usuário (nomes de arquivo, labels, seleção do editor) — substituídas por construção DOM com `textContent`, eliminando risco de XSS.
+- Promove warnings de innerHTML no `validate-webview.js` para erros (exit 1) — o validador agora falha se detectar dados de usuário em `innerHTML`.
+- Adiciona `SECURITY.md`: modelo de ameaças, mitigações de CSP/XSS/execFile, política de logging e dados enviados ao Devin CLI.
+- Adiciona seção de Troubleshooting no README: botões não respondem, CLI não encontrado, modelo não reconhecido, resposta não aparece, anexos.
+- Adiciona seção de Segurança no README com link para `SECURITY.md`.
+
 ## 0.37.0
 
 - Adiciona `scripts/validate-webview.js`: valida sintaxe do JavaScript embutido, CSP, delegação de cliques e marcadores obrigatórios — impede regressão como "painel abre sem botões".

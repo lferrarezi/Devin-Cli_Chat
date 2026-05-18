@@ -1550,7 +1550,9 @@ function renderContextChips(){
   attachedItems.forEach(function(sel, idx){
     var chip = document.createElement('span'); chip.className = 'attachChip attached';
     var icn = sel.type === 'folder' ? ICONS.folder : (sel.type === 'file' ? ICONS.file : ICONS.paperclip);
-    chip.innerHTML = icn + '<span class="lbl" title="' + (sel.file||'') + '">' + (sel.label || '') + '</span>';
+    var icoChip = document.createElement('span'); icoChip.innerHTML = icn;
+    var lblChip = document.createElement('span'); lblChip.className = 'lbl'; lblChip.title = sel.file||''; lblChip.textContent = sel.label||'';
+    chip.appendChild(icoChip); chip.appendChild(lblChip);
     var rm = document.createElement('button'); rm.className = 'rm'; rm.type = 'button'; rm.title = 'Remover'; rm.innerHTML = ICONS.close;
     rm.addEventListener('click', function(e){ e.stopPropagation(); attachedItems.splice(idx, 1); renderContextChips(); updateTokens(); });
     chip.appendChild(rm);
@@ -1558,7 +1560,9 @@ function renderContextChips(){
   });
   if(pendingSelection && !attachedItems.some(function(a){ return a.label === pendingSelection.label && a.type !== 'file'; })){
     var sug = document.createElement('span'); sug.className = 'attachChip pending'; sug.title = 'Clique para anexar selecao do editor';
-    sug.innerHTML = ICONS.paperclip + '<span class="lbl">' + pendingSelection.label + '</span>';
+    var icoSug = document.createElement('span'); icoSug.innerHTML = ICONS.paperclip;
+    var lblSug = document.createElement('span'); lblSug.className = 'lbl'; lblSug.textContent = pendingSelection.label;
+    sug.appendChild(icoSug); sug.appendChild(lblSug);
     sug.addEventListener('click', function(){ attachedItems.push(pendingSelection); pendingSelection = null; renderContextChips(); updateTokens(); });
     var x = document.createElement('button'); x.className = 'rm'; x.type = 'button'; x.title = 'Descartar selecao'; x.innerHTML = ICONS.close;
     x.addEventListener('click', function(e){ e.stopPropagation(); pendingSelection = null; renderContextChips(); updateTokens(); });
@@ -1830,7 +1834,9 @@ function renderBrowser(payload){
   entries.forEach(function(e){
     var row = document.createElement('div'); row.className = 'item browserItem';
     var left = document.createElement('span'); left.style.display = 'inline-flex'; left.style.alignItems = 'center'; left.style.gap = '6px'; left.style.overflow = 'hidden';
-    left.innerHTML = (e.isDir ? ICONS.folder : ICONS.file) + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + e.name + '</span>';
+    var icoL = document.createElement('span'); icoL.innerHTML = e.isDir ? ICONS.folder : ICONS.file;
+    var nmL = document.createElement('span'); nmL.style.overflow='hidden'; nmL.style.textOverflow='ellipsis'; nmL.style.whiteSpace='nowrap'; nmL.textContent = e.name;
+    left.appendChild(icoL); left.appendChild(nmL);
     var right = document.createElement('span'); right.style.display = 'inline-flex'; right.style.alignItems = 'center'; right.style.gap = '6px';
     var fullPath = (payload.path ? payload.path + '/' : '') + e.name;
     if(e.isDir){
@@ -1850,7 +1856,9 @@ function renderBrowser(payload){
     var hr = document.createElement('div'); hr.className = 'head'; hr.textContent = 'Sugerido';
     menu.appendChild(hr);
     var sel = document.createElement('div'); sel.className = 'item';
-    sel.innerHTML = ICONS.paperclip + '<span style="margin-left:6px">' + pendingSelection.label + '</span>';
+    var icoPend = document.createElement('span'); icoPend.innerHTML = ICONS.paperclip;
+    var lblPend = document.createElement('span'); lblPend.style.marginLeft = '6px'; lblPend.textContent = pendingSelection.label;
+    sel.appendChild(icoPend); sel.appendChild(lblPend);
     sel.addEventListener('click', function(ev){ ev.stopPropagation(); attachedItems.push(pendingSelection); pendingSelection = null; renderContextChips(); updateTokens(); closeAllMenus(); });
     menu.appendChild(sel);
   }

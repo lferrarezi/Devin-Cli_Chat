@@ -106,7 +106,7 @@ for (let i = 0; i < lines.length; i++) {
 
 if (dangerousInnerHTMLLines.length > 0) {
   for (const { line, text } of dangerousInnerHTMLLines) {
-    warn(`innerHTML com dado de usuário (linha ~${line}): ${text}`);
+    fail(`innerHTML com dado de usuário (linha ~${line}): ${text}`);
   }
 } else {
   ok('nenhum innerHTML com dados não sanitizados detectado');

@@ -1,6 +1,6 @@
 # Devin Cli Chat — VS Code
 
-> **1.0.0 — Pre-release.** Esta versão é publicada como pre-release no VS Code Marketplace. Corresponde à `1.0.0-rc.2`. Estável para uso — reporte problemas em [Issues](https://github.com/lferrarezi/Devin-Cli_Chat/issues).
+> **1.0.0 — Estável.** Reporte problemas em [Issues](https://github.com/lferrarezi/Devin-Cli_Chat/issues).
 
 Painel de chat nativo para o **Devin CLI** dentro do VS Code.  
 Interface em português brasileiro com suporte a modelos, agentes, skills, anexos e histórico.
@@ -187,6 +187,6 @@ Se algo não funcionar conforme esperado nesta RC, abra uma issue com logs do Ou
 
 ---
 
-## Versão atual: 1.0.0 (pre-release)
+## Versão atual: 1.0.0
 
 Veja o [CHANGELOG](CHANGELOG.md) para histórico completo.

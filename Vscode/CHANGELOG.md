@@ -1,8 +1,8 @@
 # Changelog
 
-## 1.0.0 (pre-release)
+## 1.0.0
 
-Versão do VS Code Marketplace correspondente à `1.0.0-rc.2`. O Marketplace não aceita sufixos semver (`-rc.N`); publicada como `1.0.0` com a flag `--pre-release`.
+Release estável. Promovida da `1.0.0-rc.2` após período de RC sem regressões reportadas.
 
 Mesmas funcionalidades da 1.0.0-rc.2 — veja entrada abaixo para o detalhamento completo.
 

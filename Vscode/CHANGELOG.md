@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0 (pre-release)
+
+Versão do VS Code Marketplace correspondente à `1.0.0-rc.2`. O Marketplace não aceita sufixos semver (`-rc.N`); publicada como `1.0.0` com a flag `--pre-release`.
+
+Mesmas funcionalidades da 1.0.0-rc.2 — veja entrada abaixo para o detalhamento completo.
+
 ## 1.0.0-rc.2
 
 - Adiciona contexto automático do editor ativo: quando o usuário envia uma pergunta sem anexos manuais, a extensão inclui automaticamente a seleção ativa ou, se não houver seleção, o arquivo aberto como contexto do prompt enviado ao Devin CLI.

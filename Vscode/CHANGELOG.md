@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+- Reescreve o README para uso no GitHub e no VS Code Marketplace.
+- Adiciona seção de pré-requisito do Devin CLI com instrução de verificação (`devin --version`) e link para documentação oficial.
+- Remove seção "Escopo da versão 1.0" (conteúdo de RC, obsoleto na estável).
+- Consolida instruções de instalação via Marketplace e via VSIX.
+- Sem mudanças funcionais na extensão.
+
 ## 1.0.0
 
 Release estável. Promovida da `1.0.0-rc.2` após período de RC sem regressões reportadas.

@@ -1,0 +1,56 @@
+name: Publish VSCode Extension
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: Vscode
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile TypeScript
+        run: npm run compile
+
+      - name: Package VSIX
+        run: npx vsce package --no-dependencies
+
+      - name: Validate VSIX integrity
+        run: |
+          VSIX_FILE=$(ls *.vsix | head -1)
+          echo "Validating $VSIX_FILE"
+          unzip -t "$VSIX_FILE"
+          echo "VSIX is valid"
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          VSIX_FILE=$(ls *.vsix | head -1)
+          npx vsce publish --packagePath "$VSIX_FILE" --pat "$VSCE_PAT"
+
+      - name: Upload VSIX to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Vscode/*.vsix
+          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}

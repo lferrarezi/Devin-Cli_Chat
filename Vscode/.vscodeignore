@@ -7,3 +7,5 @@ scripts/**
 test/**
 RELEASE_CHECKLIST.md
 docs/**
+src/**
+tsconfig.json

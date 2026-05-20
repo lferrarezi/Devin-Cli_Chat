@@ -2,7 +2,7 @@
 	"name": "devin-cli-chat",
 	"displayName": "Devin Cli Chat",
 	"description": "Tela propria de chat para Devin CLI no VS Code, em portugues brasileiro, com contexto compacto, aliases reais do CLI e anexos resilientes.",
-	"version": "1.0.6",
+	"version": "1.0.7",
 	"publisher": "luiz-alberto-abarca-ferrarezi",
 	"author": {
 		"name": "Luiz Alberto Abarca Ferrarezi"
@@ -13,19 +13,21 @@
 		"url": "https://github.com/lferrarezi/Devin-Cli_Chat"
 	},
 	"scripts": {
-		"compile": "tsc -p tsconfig.json",
-		"vscode:prepublish": "npm run compile",
-		"watch": "tsc -watch -p tsconfig.json",
+		"compile": "tsc -p tsconfig.json --noEmit",
+		"vscode:prepublish": "npm run bundle",
+		"watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
 		"test": "node test/unit.js",
 		"validate:webview": "node scripts/validate-webview.js",
 		"validate:vsix": "node scripts/validate-vsix.js",
 		"release:check": "npm run compile && node -c out/extension.js && npm run validate:webview && npm run test",
-		"package": "vsce package --no-dependencies"
+		"package": "vsce package",
+		"bundle": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --minify"
 	},
 	"devDependencies": {
 		"@types/node": "^18.19.130",
 		"@types/vscode": "^1.115.0",
 		"@vscode/vsce": "^3.9.1",
+		"esbuild": "^0.28.0",
 		"typescript": "^5.4.0"
 	},
 	"engines": {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10.2
+
+- Ajusta o ID tecnico da extensao para `devin-cli-chat-vscode`, necessario para publicar sob o novo publisher `lferrarezi`.
+- Mantem o nome exibido como Devin Cli Chat.
+
 ## 1.10.1
 
 - Altera o publisher do Marketplace VS Code para `lferrarezi`, usando o novo owner `Luiz Ferrarezi`.

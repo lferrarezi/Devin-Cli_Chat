@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.10.4
+
+- Ajusta o nome exibido da nova publicacao do Marketplace para `Devin-Cli`.
+
 ## 1.10.3
 
 - Ajusta o nome exibido da nova publicacao para `Devin Cli Chat VSCode`, necessario para publicar sob o owner `lferrarezi` sem conflitar com a publicacao antiga.

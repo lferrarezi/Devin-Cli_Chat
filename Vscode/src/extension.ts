@@ -101,10 +101,12 @@ function readCurrentModelFromDevinConfig() {
   return json && json.agent ? normalizeModel(json.agent.model) : undefined;
 }
 function configuredModel() {
-  return normalizeModel(cfg().get('modeloAtual') || readCurrentModelFromDevinConfig() || 'auto');
+  const configured = cfg().get('modeloAtual');
+  return normalizeModel(configured === undefined || configured === null ? (readCurrentModelFromDevinConfig() || 'auto') : configured);
 }
 function modelForCli() {
-  return sanitizeModel(cfg().get('modeloAtual') || readCurrentModelFromDevinConfig() || 'auto');
+  const configured = cfg().get('modeloAtual');
+  return sanitizeModel(configured === undefined || configured === null ? (readCurrentModelFromDevinConfig() || 'auto') : configured);
 }
 function currentAgent() { return String(cfg().get('agenteAtual') || 'auto'); }
 function currentMode() { return String(cfg().get('modoExecucaoChat') || 'resposta-integrada'); }

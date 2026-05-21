@@ -134,6 +134,8 @@ const {
   modelsForUi,
   scanAgents,
   scanSkills,
+  skillNameFromMarkdownFile,
+  importSkillMarkdownFile,
   cancelIntegratedRun,
   automaticEditorContext,
   resolveWorkspacePathSafe,
@@ -372,6 +374,26 @@ test('scanSkills em diretório vazio retorna array vazio ou array', () => {
   const skills = scanSkills();
   assert.ok(Array.isArray(skills), 'deve ser array');
   // Restaurar
+  mockConfigValues.diretorioSkillsWorkspace = '.devin/skills';
+  mockConfigValues.diretorioSkillsGlobal = '~/.config/devin/skills';
+});
+
+test('skillNameFromMarkdownFile normaliza nome de arquivo .md para skill', () => {
+  assert.strictEqual(skillNameFromMarkdownFile('/tmp/Code Review Avancado.md'), 'code-review-avancado');
+  assert.strictEqual(skillNameFromMarkdownFile('/tmp/@@@.md'), 'skill');
+});
+
+test('importSkillMarkdownFile copia .md para diretorio padrao como SKILL.md', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'devin-import-skill-'));
+  const source = path.join(root, 'Minha Skill.md');
+  const skillsDir = path.join(root, 'skills');
+  fs.writeFileSync(source, '# Minha Skill\n\nUse esta skill.', 'utf8');
+  mockConfigValues.diretorioSkillsWorkspace = skillsDir;
+  mockConfigValues.diretorioSkillsGlobal = path.join(root, 'global-skills');
+  const imported = importSkillMarkdownFile(source);
+  assert.strictEqual(imported.name, 'minha-skill');
+  assert.ok(fs.existsSync(path.join(skillsDir, 'minha-skill', 'SKILL.md')), 'SKILL.md deve ser criado');
+  assert.ok(scanSkills().includes('minha-skill'), 'scanSkills deve encontrar a skill importada');
   mockConfigValues.diretorioSkillsWorkspace = '.devin/skills';
   mockConfigValues.diretorioSkillsGlobal = '~/.config/devin/skills';
 });

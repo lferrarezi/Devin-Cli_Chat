@@ -88,7 +88,7 @@ function isSafeOpaqueId(value) {
 function validateWebviewMessage(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const type = safeString(raw.type, 40);
-  const simple = new Set(['ready', 'cancelRun', 'verifyCli', 'requestSelection', 'attachMenu', 'attachFiles', 'pickWorkspaceFiles', 'manualModel', 'refreshModels', 'review', 'selection', 'insertSelection', 'newChat', 'getHistory', 'clearHistory']);
+  const simple = new Set(['ready', 'cancelRun', 'verifyCli', 'requestSelection', 'attachMenu', 'attachFiles', 'pickWorkspaceFiles', 'manualModel', 'refreshModels', 'review', 'selection', 'insertSelection', 'newChat', 'getHistory', 'clearHistory', 'importSkillFile']);
   if (simple.has(type)) return { type };
   if (type === 'clientError') return { type, text: safeString(raw.text, 2000) || '' };
   if (type === 'send') {
@@ -551,6 +551,48 @@ function scanSkills() {
   skillsCache = { at: now, values: result };
   return result;
 }
+function skillNameFromMarkdownFile(filePath) {
+  const base = path.basename(String(filePath || ''), path.extname(String(filePath || '')));
+  const normalized = base
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .replace(/-{2,}/g, '-');
+  return normalized || 'skill';
+}
+function defaultSkillsInstallDir() {
+  return resolveMaybe(cfg().get('diretorioSkillsWorkspace') || '.devin/skills');
+}
+function uniqueSkillDir(root, name) {
+  let candidate = path.join(root, name);
+  let n = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(root, `${name}-${n}`);
+    n++;
+  }
+  return candidate;
+}
+function importSkillMarkdownFile(filePath) {
+  const source = String(filePath || '');
+  if (!source || path.extname(source).toLowerCase() !== '.md') {
+    throw new Error('Selecione um arquivo .md para importar como skill.');
+  }
+  if (!fs.existsSync(source) || !fs.statSync(source).isFile()) {
+    throw new Error('Arquivo de skill nao encontrado: ' + source);
+  }
+  const root = defaultSkillsInstallDir();
+  if (!root) throw new Error('Diretorio padrao de skills nao resolvido.');
+  const name = skillNameFromMarkdownFile(source);
+  const targetDir = uniqueSkillDir(root, name);
+  const finalName = path.basename(targetDir);
+  fs.mkdirSync(targetDir, { recursive: true });
+  const target = path.join(targetDir, 'SKILL.md');
+  fs.copyFileSync(source, target);
+  invalidateMetaCache();
+  return { name: finalName, file: target, dir: targetDir };
+}
 function activeContext() {
   const editor = vscode.window.activeTextEditor;
   if (!editor) return 'Nenhum editor ativo.';
@@ -686,18 +728,47 @@ async function pickModel() {
 }
 async function pickSkills() {
   const available = scanSkills();
-  if (!available.length) {
-    vscode.window.showInformationMessage('Nenhuma skill encontrada em .devin/skills ou ~/.config/devin/skills.');
-    return;
-  }
+  const importLabel = '+ Importar arquivo .md como skill';
   const current = new Set(selectedSkills());
-  const items = available.map(s => ({ label: s, picked: current.has(s) }));
+  const items = [
+    { label: importLabel, description: 'Copia para o diretorio padrao de skills' },
+    ...available.map(s => ({ label: s, picked: current.has(s) }))
+  ];
   const picked = await vscode.window.showQuickPick(items, {
     canPickMany: true,
-    placeHolder: 'Selecione skills disponiveis para o Devin'
+    placeHolder: available.length ? 'Selecione skills disponiveis para o Devin' : 'Importe um .md ou selecione skills disponiveis'
   });
   if (!picked) return;
-  await setConfig('skillsSelecionadas', picked.map(p => p.label));
+  const selected = picked.filter(p => p.label !== importLabel).map(p => p.label);
+  if (picked.some(p => p.label === importLabel)) {
+    const imported = await importSkillMarkdownFromDialog({ selectImported: false });
+    if (imported) selected.push(imported.name);
+  }
+  await setConfig('skillsSelecionadas', Array.from(new Set(selected)));
+}
+async function importSkillMarkdownFromDialog(options) {
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFiles: true,
+    canSelectFolders: false,
+    canSelectMany: false,
+    filters: { Markdown: ['md'] },
+    title: 'Importar arquivo Markdown como skill Devin'
+  });
+  if (!picked || !picked.length) return null;
+  try {
+    const imported = importSkillMarkdownFile(picked[0].fsPath);
+    if (!options || options.selectImported !== false) {
+      const current = new Set(selectedSkills());
+      current.add(imported.name);
+      await setConfig('skillsSelecionadas', Array.from(current));
+    }
+    if (provider) provider.refreshMeta();
+    vscode.window.showInformationMessage(`Skill "${imported.name}" importada para ${imported.file}.`);
+    return imported;
+  } catch (err) {
+    vscode.window.showErrorMessage('Falha ao importar skill: ' + (err && err.message ? err.message : String(err)));
+    return null;
+  }
 }
 
 function loadHistory() {
@@ -791,6 +862,11 @@ class ChatViewProvider {
         }
         if (type === 'setMode') { await setConfig('modoExecucaoChat', message.value || 'resposta-integrada'); return; }
         if (type === 'setAgent') { await setConfig('agenteAtual', message.value || 'auto'); return; }
+        if (type === 'importSkillFile') {
+          const imported = await importSkillMarkdownFromDialog();
+          if (imported) this.post({ type: 'action', ok: true, text: 'Skill importada: ' + imported.name });
+          return;
+        }
         if (type === 'toggleSkill') {
           const set = new Set(selectedSkills());
           if (message.value && set.has(message.value)) set.delete(message.value);
@@ -1408,6 +1484,8 @@ textarea{width:100%;min-height:62px;max-height:200px;resize:none;background:tran
 .menu .item.selected{color:var(--accent);font-weight:600}
 .menu .item .arrow{opacity:.5;font-size:10px;flex:0 0 auto}
 .menu .empty{padding:8px 12px;color:var(--muted);font-size:11px}
+.menu .menuAction{width:100%;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--fg);cursor:pointer;text-align:left;padding:7px 12px;font-size:12px}
+.menu .menuAction:hover{background:var(--hover)}
 body.narrow .chipBtn .chipText{display:none}
 body.narrow .chipBtn{padding:0 6px;width:30px;justify-content:center}
 body.narrow .chipBtn.alwaysText .chipText{display:inline}
@@ -1812,6 +1890,12 @@ function openSkillsMenu(){
   menu.appendChild(head);
   var skills = META.skills || []; var sel = new Set(META.selectedSkills || []);
   if(!skills.length){ var e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Nenhuma skill em .devin/skills'; menu.appendChild(e); }
+  var importBtn = document.createElement('button');
+  importBtn.type = 'button';
+  importBtn.className = 'menuAction';
+  importBtn.textContent = '+ Importar .md como skill';
+  importBtn.addEventListener('click', function(ev){ ev.stopPropagation(); post({ type: 'importSkillFile' }); });
+  menu.appendChild(importBtn);
   skills.forEach(function(name){
     var lab = document.createElement('label'); lab.className = 'check';
     var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = sel.has(name);
@@ -2122,5 +2206,5 @@ function deactivate() {
 module.exports = {
   activate,
   deactivate,
-  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown }
+  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, skillNameFromMarkdownFile, importSkillMarkdownFile, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown }
 };

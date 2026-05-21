@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.1
+
+- Adiciona importacao de arquivo Markdown como skill pelo seletor de skills.
+- O arquivo `.md` selecionado passa a ser copiado para o diretorio padrao de skills do workspace como `<nome-normalizado>/SKILL.md`.
+- A skill importada e selecionada automaticamente e passa a aparecer na descoberta normal de skills.
+- Adiciona acao equivalente no menu de skills do painel.
+
 ## 1.9.0
 
 - Pre-release acumulada com hardening do webview: nonce criptografico por renderizacao e validacao centralizada de mensagens recebidas do painel.

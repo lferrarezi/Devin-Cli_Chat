@@ -106,14 +106,10 @@ function validateWebviewMessage(raw) {
     if (hasExplicitContext !== undefined) out.hasExplicitContext = hasExplicitContext;
     return out;
   }
-  if (type === 'terminal') {
-    const text = safeString(raw.text, 200000);
-    return text === undefined ? null : { type, text };
-  }
   if (type === 'searchWorkspaceFiles') {
     return { type, query: safeString(raw.query || '', 200) || '' };
   }
-  if (type === 'setModel' || type === 'setMode' || type === 'setAgent' || type === 'toggleSkill' || type === 'toggleTool') {
+  if (type === 'setModel' || type === 'setAgent' || type === 'toggleSkill' || type === 'toggleTool') {
     const value = safeString(raw.value, 200);
     return value === undefined ? null : { type, value };
   }
@@ -213,7 +209,7 @@ function modelForCli() {
   return sanitizeModel(configured === undefined || configured === null ? (readCurrentModelFromDevinConfig() || 'auto') : configured);
 }
 function currentAgent() { return String(cfg().get('agenteAtual') || 'auto'); }
-function currentMode() { return String(cfg().get('modoExecucaoChat') || 'resposta-integrada'); }
+function currentMode() { return 'resposta-integrada'; }
 function selectedSkills() {
   const list = cfg().get('skillsSelecionadas') || [];
   return Array.isArray(list) ? list.map(String).filter(Boolean) : [];
@@ -963,16 +959,10 @@ class ChatViewProvider {
         if (type === 'attachWorkspacePath') { await this.attachWorkspacePath(message.path || ''); return; }
         if (type === 'searchWorkspaceFiles') { await this.searchWorkspaceFiles(message.query || ''); return; }
         if (type === 'send') { await this.send(message.text || '', { echoUser: message.echo !== false, displayText: message.displayText || message.text || '', hasExplicitContext: !!message.hasExplicitContext }); return; }
-        if (type === 'terminal') {
-          openTerminal(message.text || '');
-          this.post({ type: 'action', ok: true, text: 'Terminal aberto.' });
-          return;
-        }
         if (type === 'setModel') {
           await setConfig('modeloAtual', sanitizeModel(message.value || 'auto'));
           return;
         }
-        if (type === 'setMode') { await setConfig('modoExecucaoChat', message.value || 'resposta-integrada'); return; }
         if (type === 'setAgent') { await setConfig('agenteAtual', message.value || 'auto'); return; }
         if (type === 'importAgentFile') {
           const imported = await importAgentMarkdownFromDialog();
@@ -1463,15 +1453,7 @@ class ChatViewProvider {
     this.refreshMeta();
 
     try {
-      const mode = currentMode();
-      log(`send: modo=${mode} prompt=${prompt.length} chars`);
-      if (mode === 'terminal') {
-        openTerminal(prompt);
-        const reply = 'Sessao aberta no terminal integrado, ja posicionada na pasta aberta no VS Code.';
-        this.post({ type: 'message', role: 'assistant', text: reply });
-        this.session.messages.push({ role: 'assistant', text: reply, ts: Date.now() });
-        return;
-      }
+      log(`send: modo=resposta-integrada prompt=${prompt.length} chars`);
       const answer = await runIntegrated(prompt, { sessionId: this.session.id });
       log(`send: resposta recebida (${answer ? answer.length : 0} chars)`);
       const outTokens = estimateTokens(answer);
@@ -1661,14 +1643,13 @@ body.narrow .modelLockBadge.show span{display:none}
   <button type="button" class="iconBtn" data-action="newChat" title="Nova conversa">${ICONS.plus}</button>
   <button type="button" class="iconBtn" data-action="refreshModels" title="Atualizar modelos">${ICONS.refresh}</button>
   <button type="button" class="iconBtn" data-action="verifyCli" title="Verificar Devin CLI">i</button>
-  <button type="button" class="iconBtn" data-action="terminal" title="Abrir sessao no terminal">${ICONS.terminal}</button>
 </header>
 <div id="historyPanel" class="panel"><header>Historico <div class="barSpacer"></div><button data-action="clearHistory">Limpar</button></header><div id="historyList"></div></div>
 
 <main class="thread" id="thread">
   <section class="welcome" id="welcome">
     <div class="welcomeTitle">Como posso ajudar neste workspace?</div>
-    <div class="welcomeText">Selecione modelo, agente, modo e skills antes de enviar. As ultimas conversas ficam disponiveis para continuar.</div>
+    <div class="welcomeText">Selecione modelo, agente, skills e tools antes de enviar. As ultimas conversas ficam disponiveis para continuar.</div>
     <div id="recentBlock" class="recentBlock" style="display:none">
       <div class="recentHead">${ICONS.history} Conversas recentes</div>
       <div id="recentList"></div>
@@ -1689,7 +1670,6 @@ body.narrow .modelLockBadge.show span{display:none}
       <button type="button" class="chipBtn" data-action="attachMenu" id="attachBtn" title="Anexar contexto">${ICONS.attach}<span class="chipText">Anexar</span></button>
       <button type="button" class="chipBtn" data-action="openModelMenu" id="modelChip" title="Modelo">${ICONS.brain}<span class="chipText" id="modelChipText">Modelo</span><span class="caret">${ICONS.caret}</span></button>
       <button type="button" class="chipBtn" data-action="openAgentMenu" id="agentChip" title="Agente">${ICONS.bot}<span class="chipText" id="agentChipText">Agente</span><span class="caret">${ICONS.caret}</span></button>
-      <button type="button" class="chipBtn" data-action="openModeMenu" id="modeChip" title="Modo">${ICONS.mode}<span class="chipText" id="modeChipText">Modo</span><span class="caret">${ICONS.caret}</span></button>
       <button type="button" class="chipBtn" data-action="openSkillsMenu" id="skillsBtn" title="Skills">${ICONS.sparkle}<span class="chipText">Skills <span id="skillsCount">0</span></span></button>
       <button type="button" class="chipBtn" data-action="openToolsMenu" id="toolsBtn" title="Tools">${ICONS.wrench}<span class="chipText">Tools <span id="toolsCount">0</span></span></button>
       <span class="barSpacer"></span>
@@ -2040,18 +2020,6 @@ function openAgentMenu(){
   openMenu = 'agent';
 }
 
-function openModeMenu(){
-  closeAllMenus();
-  var anchor = byId('modeChip');
-  var items = [
-    { label: 'Integrado (resposta no chat)', value: 'resposta-integrada' },
-    { label: 'Terminal', value: 'terminal' }
-  ];
-  var menu = buildMenu(items, anchor, function(value){ post({ type: 'setMode', value: value }); }, 1);
-  positionMenuAnchor(menu, anchor);
-  openMenu = 'mode';
-}
-
 function openSkillsMenu(){
   closeAllMenus();
   var anchor = byId('skillsBtn');
@@ -2279,7 +2247,6 @@ function clientError(context, err){
 function action(name, element){
   if(name === 'send') return sendPrompt(getPrompt());
   if(name === 'newChat'){ post({ type: 'newChat' }); return; }
-  if(name === 'terminal') return post({ type: 'terminal', text: getPrompt() });
   if(name === 'refreshModels') return post({ type: 'refreshModels' });
   if(name === 'review'){ setBusy(true); return post({ type: 'review' }); }
   if(name === 'selection'){ setBusy(true); return post({ type: 'selection' }); }
@@ -2290,7 +2257,6 @@ function action(name, element){
   if(name === 'clearHistory'){ post({ type: 'clearHistory' }); return; }
   if(name === 'openModelMenu') return openModelMenu();
   if(name === 'openAgentMenu') return openAgentMenu();
-  if(name === 'openModeMenu') return openModeMenu();
   if(name === 'attachMenu') return post({ type: 'attachMenu' });
   if(name === 'verifyCli') return post({ type: 'verifyCli' });
   if(name === 'cancelRun') return post({ type: 'cancelRun' });
@@ -2325,7 +2291,7 @@ window.addEventListener('message', function(ev){
     META.skills = m.skills || []; META.selectedSkills = m.selectedSkills || [];
     META.tools = m.tools || []; META.selectedTools = m.selectedTools || [];
     META.modelLocked = !!m.modelLocked; META.hasMessages = !!m.hasMessages;
-    META.model = m.model || 'auto'; META.agent = m.agent || 'auto'; META.mode = m.mode || 'resposta-integrada';
+    META.model = m.model || 'auto'; META.agent = m.agent || 'auto'; META.mode = 'resposta-integrada';
     META.agents = m.agents || ['auto'];
     META.tokensTotal = m.tokensTotal || 0; META.tokensIn = m.tokensIn || 0; META.tokensOut = m.tokensOut || 0;
     META.recentSessions = m.recentSessions || [];
@@ -2336,7 +2302,6 @@ window.addEventListener('message', function(ev){
     if(modelChip){ modelChip.disabled = false; modelChip.classList.toggle('has', !!META.model); }
     var agentText = byId('agentChipText'); if(agentText) agentText.textContent = META.agent === 'auto' ? 'Agente' : META.agent;
     var agentChip = byId('agentChip'); if(agentChip) agentChip.classList.toggle('has', META.agent !== 'auto');
-    var modeText = byId('modeChipText'); if(modeText) modeText.textContent = META.mode === 'terminal' ? 'Terminal' : 'Integrado';
     var c = byId('skillsCount'); if(c) c.textContent = (META.selectedSkills || []).length;
     var sb = byId('skillsBtn'); if(sb) sb.classList.toggle('has', (META.selectedSkills || []).length > 0);
     var tc = byId('toolsCount'); if(tc) tc.textContent = (META.selectedTools || []).length;
@@ -2441,13 +2406,6 @@ async function activate(context) {
   }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarSkills', pickSkills));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarTools', pickTools));
-  context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarModo', async () => {
-    const pick = await vscode.window.showQuickPick([
-      { label: 'Integrado (resposta no chat)', value: 'resposta-integrada' },
-      { label: 'Terminal', value: 'terminal' }
-    ], { placeHolder: 'Selecione o modo de execucao' });
-    if (pick) await setConfig('modoExecucaoChat', pick.value);
-  }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.limparHistorico', async () => {
     const ok = await vscode.window.showWarningMessage('Limpar todo o historico de chats?', { modal: true }, 'Limpar');
     if (ok === 'Limpar') { await saveHistory([]); if (provider) provider.post({ type: 'history', sessions: [] }); }

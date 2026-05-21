@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.5
+
+- Remove o seletor Integrado/Terminal do composer.
+- Fixa o chat no modo integrado como comportamento unico.
+- Remove o comando de selecionar modo de execucao.
+
 ## 1.9.4
 
 - Troca o icone de Tools por uma chave inglesa.

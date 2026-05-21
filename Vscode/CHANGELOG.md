@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.7
+
+- Adiciona seletor dinamico de Effort quando o Devin CLI local expõe `--effort` ou `--reasoning-effort`.
+- Envia o Effort selecionado para a CLI apenas quando houver flag compatível, mantendo `auto` como opção de não forçar.
+- Corrige o menu de modelos do painel para usar a lista descoberta localmente, sem depender da lista fixa do webview.
+
 ## 1.9.6
 
 - O seletor de modelos passa a priorizar modelos descobertos do Devin CLI local do usuario.

@@ -2,7 +2,7 @@
 	"name": "devin-cli-chat",
 	"displayName": "Devin Cli Chat",
 	"description": "Tela propria de chat para Devin CLI no VS Code, em portugues brasileiro, com contexto compacto, aliases reais do CLI e anexos resilientes.",
-	"version": "1.9.6",
+	"version": "1.9.7",
 	"publisher": "luiz-alberto-abarca-ferrarezi",
 	"author": {
 		"name": "Luiz Alberto Abarca Ferrarezi"
@@ -109,6 +109,11 @@
 				"category": "Devin Cli Chat"
 			},
 			{
+				"command": "devinCliChat.selecionarEffort",
+				"title": "Devin Cli Chat: Selecionar Effort",
+				"category": "Devin Cli Chat"
+			},
+			{
 				"command": "devinCliChat.atualizarModelos",
 				"title": "Devin Cli Chat: Atualizar modelos do Devin CLI",
 				"category": "Devin Cli Chat",
@@ -164,6 +169,9 @@
 				},
 				{
 					"command": "devinCliChat.selecionarModelo"
+				},
+				{
+					"command": "devinCliChat.selecionarEffort"
 				},
 				{
 					"command": "devinCliChat.atualizarModelos"
@@ -234,6 +242,24 @@
 					"type": "string",
 					"default": "--model",
 					"description": "Flag usada para enviar o modelo ao Devin CLI. Por padrao, a extensao envia --model <alias>, inclusive auto."
+				},
+				"devinCliChat.effortsDisponiveis": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [],
+					"description": "Efforts descobertos ou informados manualmente para este Devin CLI. A extensao so mostra o seletor quando houver flag de Effort disponivel."
+				},
+				"devinCliChat.effortAtual": {
+					"type": "string",
+					"default": "auto",
+					"description": "Effort selecionado atualmente. Use auto para nao forcar Effort."
+				},
+				"devinCliChat.argumentoEffort": {
+					"type": "string",
+					"default": "",
+					"description": "Flag usada para enviar o Effort ao Devin CLI. Quando vazio, a extensao tenta descobrir --effort ou --reasoning-effort pela ajuda local do Devin CLI."
 				},
 				"devinCliChat.agenteAtual": {
 					"type": "string",

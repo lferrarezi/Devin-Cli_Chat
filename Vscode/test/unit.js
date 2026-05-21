@@ -18,7 +18,9 @@ const os     = require('os');
 const mockConfigValues = {
   argumentosPadrao: [],
   argumentoModelo: '--model',
+  argumentoEffort: '',
   modeloAtual: 'auto',
+  effortAtual: 'auto',
   agenteAtual: 'auto',
   modoExecucaoChat: 'resposta-integrada',
   prefixoPromptPadrao: '',
@@ -27,6 +29,7 @@ const mockConfigValues = {
   timeoutDescobertaModelosMs: 100,
   timeoutTotalDescobertaModelosMs: 200,
   modelosDisponiveis: [],
+  effortsDisponiveis: [],
   arquivosCacheModelos: [],
   limiteBytesCacheModelos: 5242880,
   descobrirModelosAutomaticamente: false,
@@ -133,11 +136,15 @@ if (!fs.existsSync(extPath)) {
 const ext = require(extPath);
 const {
   sanitizeModel,
+  sanitizeEffort,
   sanitizePromptText,
   isSafeModelId,
+  isSafeEffortId,
   baseArgs,
   fullPrompt,
   modelsForUi,
+  effortsForUi,
+  parseEffortSpecFromText,
   scanAgents,
   scanSkills,
   scanTools,
@@ -257,6 +264,11 @@ test('"ab" → true (2 chars, mínimo)', () => {
   assert.ok(isSafeModelId('ab'));
 });
 
+test('effort inválido é normalizado para auto', () => {
+  assert.strictEqual(sanitizeEffort('<script>'), 'auto');
+  assert.ok(!isSafeEffortId('-high'));
+});
+
 // ── Testes: baseArgs ──────────────────────────────────────────────────────────
 console.log('\n── baseArgs ──');
 
@@ -315,6 +327,24 @@ test('argumentoModelo vazio → não envia modelo mesmo com model válido', () =
   mockConfigValues.modeloAtual = 'auto';
 });
 
+test('effort=auto NÃO envia argumento de effort', () => {
+  mockConfigValues.effortAtual = 'auto';
+  mockConfigValues.argumentoEffort = '--effort';
+  const args = baseArgs();
+  assert.ok(!args.includes('--effort'), 'args não deve conter --effort: ' + JSON.stringify(args));
+  mockConfigValues.argumentoEffort = '';
+});
+
+test('effort=high envia --effort high quando flag configurada', () => {
+  mockConfigValues.effortAtual = 'high';
+  mockConfigValues.argumentoEffort = '--effort';
+  const args = baseArgs();
+  assert.ok(args.includes('--effort'), 'deve conter --effort');
+  assert.ok(args.includes('high'), 'deve conter high');
+  mockConfigValues.effortAtual = 'auto';
+  mockConfigValues.argumentoEffort = '';
+});
+
 // ── Testes: fullPrompt ────────────────────────────────────────────────────────
 console.log('\n── fullPrompt ──');
 
@@ -355,6 +385,13 @@ test('tools selecionadas são mencionadas no prompt', () => {
   mockConfigValues.toolsSelecionadas = [];
 });
 
+test('effort selecionado é mencionado no prompt', () => {
+  mockConfigValues.effortAtual = 'medium';
+  const prompt = fullPrompt('teste');
+  assert.ok(prompt.includes('Effort selecionado: medium'), 'prompt deve mencionar effort');
+  mockConfigValues.effortAtual = 'auto';
+});
+
 test('fullPrompt remove bytes nulos antes de chamar a CLI', () => {
   const prompt = fullPrompt('arquivo binario\u0000com byte nulo');
   assert.ok(!prompt.includes('\u0000'), 'prompt final nao pode conter byte nulo');
@@ -384,6 +421,37 @@ test('retorna lista utilizavel mesmo sem modelos manuais', () => {
   const models = modelsForUi();
   assert.ok(models.length >= 1, 'deve retornar pelo menos auto ou modelo detectado');
   assert.ok(models.includes('auto'), 'deve manter auto como opcao de nao forcar modelo');
+});
+
+// ── Testes: effortsForUi ──────────────────────────────────────────────────────
+console.log('\n── effortsForUi ──');
+
+test('sem flag e sem efforts manuais não mostra seletor de Effort', () => {
+  mockConfigValues.argumentoEffort = '';
+  mockConfigValues.effortsDisponiveis = [];
+  assert.deepStrictEqual(effortsForUi(), []);
+});
+
+test('com flag configurada inclui auto e efforts manuais', () => {
+  mockConfigValues.argumentoEffort = '--effort';
+  mockConfigValues.effortsDisponiveis = ['low', 'high'];
+  const efforts = effortsForUi();
+  assert.ok(efforts.includes('auto'), 'deve incluir auto');
+  assert.ok(efforts.includes('low'), 'deve incluir low');
+  assert.ok(efforts.includes('high'), 'deve incluir high');
+  mockConfigValues.argumentoEffort = '';
+  mockConfigValues.effortsDisponiveis = [];
+});
+
+test('parseEffortSpecFromText detecta flag e valores', () => {
+  const spec = parseEffortSpecFromText('Options:\n  --effort <EFFORT> Possible values: low, medium, high');
+  assert.strictEqual(spec.flag, '--effort');
+  assert.deepStrictEqual(spec.values, ['low', 'medium', 'high']);
+});
+
+test('parseEffortSpecFromText sem flag retorna vazio', () => {
+  const spec = parseEffortSpecFromText('Options:\n  --model <MODEL>');
+  assert.deepStrictEqual(spec, { flag: '', values: [] });
 });
 
 // ── Testes: scanAgents / scanSkills ───────────────────────────────────────────
@@ -500,6 +568,16 @@ test('script da webview tem sugestoes de slash command e arquivo com @', () => {
   assert.ok(script.includes('slashItems'), 'deve conter lista de slash commands');
   assert.ok(script.includes('searchWorkspaceFiles'), 'deve buscar arquivos do workspace para @');
   assert.ok(script.includes('workspaceFileSuggestions'), 'deve renderizar sugestoes de arquivos');
+});
+
+test('script da webview usa modelos dinamicos e menu de Effort', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'extension.ts'), 'utf8');
+  const scriptMatch = src.match(/<script nonce="\$\{nonce\}">([\s\S]*?)<\/script>/);
+  const script = scriptMatch ? scriptMatch[1] : '';
+  assert.ok(!script.includes('MODEL_TREE'), 'nao deve depender de lista estatica MODEL_TREE');
+  assert.ok(script.includes('META.models'), 'deve usar modelos vindos do backend');
+  assert.ok(script.includes('openEffortMenu'), 'deve expor menu de Effort');
+  assert.ok(script.includes("post({ type: 'setEffort'"), 'deve enviar setEffort ao backend');
 });
 
 // ── Testes: automaticEditorContext ────────────────────────────────────────────
@@ -735,6 +813,10 @@ test('validateWebviewMessage rejeita payload malformado', () => {
 test('validateWebviewMessage normaliza payload valido', () => {
   const msg = validateWebviewMessage({ type: 'send', text: 'ola', displayText: 'ola', echo: false, hasExplicitContext: true });
   assert.deepStrictEqual(msg, { type: 'send', text: 'ola', displayText: 'ola', echo: false, hasExplicitContext: true });
+});
+
+test('validateWebviewMessage aceita setEffort', () => {
+  assert.deepStrictEqual(validateWebviewMessage({ type: 'setEffort', value: 'high' }), { type: 'setEffort', value: 'high' });
 });
 
 test('validateWebviewMessage aceita busca de arquivos do workspace', () => {

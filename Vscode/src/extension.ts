@@ -10,6 +10,7 @@ const crypto = require('crypto');
 
 const EXT = 'devinCliChat';
 const FALLBACK_MODELS = ['auto', 'sonnet', 'opus', 'codex'];
+const COMMON_EFFORTS = ['low', 'medium', 'high'];
 const HISTORY_KEY = 'devinCliChat.chatHistory.v1';
 const FIRST_INSTALL_LAYOUT_KEY = 'devinCliChat.firstInstallLayout.v1';
 const MAX_HISTORY = 50;
@@ -23,6 +24,7 @@ let extContext;
 let outputChannel;
 const activeRuns = new Map();
 let modelCache = { at: 0, values: undefined };
+let effortCache = { at: 0, values: undefined, flag: undefined };
 let agentsCache = { at: 0, values: undefined };
 let skillsCache = { at: 0, values: undefined };
 let toolsCache = { at: 0, values: undefined };
@@ -39,12 +41,16 @@ function modelCacheMs() {
 }
 function invalidateMetaCache() {
   modelCache = { at: 0, values: undefined };
+  effortCache = { at: 0, values: undefined, flag: undefined };
   agentsCache = { at: 0, values: undefined };
   skillsCache = { at: 0, values: undefined };
   toolsCache = { at: 0, values: undefined };
 }
 function isSafeModelId(value) {
   return /^[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}$/.test(String(value || '').trim());
+}
+function isSafeEffortId(value) {
+  return /^[a-zA-Z][a-zA-Z0-9._-]{1,40}$/.test(String(value || '').trim());
 }
 
 function cfg() { return vscode.workspace.getConfiguration(EXT); }
@@ -111,7 +117,7 @@ function validateWebviewMessage(raw) {
   if (type === 'searchWorkspaceFiles') {
     return { type, query: safeString(raw.query || '', 200) || '' };
   }
-  if (type === 'setModel' || type === 'setAgent' || type === 'toggleSkill' || type === 'toggleTool') {
+  if (type === 'setModel' || type === 'setEffort' || type === 'setAgent' || type === 'toggleSkill' || type === 'toggleTool') {
     const value = safeString(raw.value, 200);
     return value === undefined ? null : { type, value };
   }
@@ -181,6 +187,11 @@ function sanitizeModel(value) {
   if (!s || s === 'default' || s === 'padrao' || s === 'padrão') return 'auto';
   return isSafeModelId(s) ? s : 'auto';
 }
+function sanitizeEffort(value) {
+  const s = String(value || '').trim().toLowerCase();
+  if (!s || s === 'default' || s === 'padrao' || s === 'padrão') return 'auto';
+  return isSafeEffortId(s) ? s : 'auto';
+}
 function normalizeModel(value) { return sanitizeModel(value); }
 function validModelsForUi() { return [...FALLBACK_MODELS]; }
 function readJson(filePath) {
@@ -209,6 +220,9 @@ function configuredModel() {
 function modelForCli() {
   const configured = cfg().get('modeloAtual');
   return sanitizeModel(configured === undefined || configured === null ? (readCurrentModelFromDevinConfig() || 'auto') : configured);
+}
+function currentEffort() {
+  return sanitizeEffort(cfg().get('effortAtual') || 'auto');
 }
 function currentAgent() { return String(cfg().get('agenteAtual') || 'auto'); }
 function currentMode() { return 'resposta-integrada'; }
@@ -264,11 +278,15 @@ function baseArgs() {
   const modelFlag = String(cfg().get('argumentoModelo') || '').trim();
   const selectedModel = modelForCli();
   if (modelFlag && selectedModel && selectedModel !== 'auto') out.push(modelFlag, selectedModel);
+  const selectedEffort = currentEffort();
+  const effortFlag = effortFlagForCli();
+  if (effortFlag && selectedEffort && selectedEffort !== 'auto') out.push(effortFlag, selectedEffort);
   return out;
 }
 function fullPrompt(text) {
   const prefix = cfg().get('prefixoPromptPadrao') || '';
   const selectedModel = modelForCli() || configuredModel() || 'auto';
+  const selectedEffort = currentEffort();
   const selectedAgent = currentAgent();
   const skills = selectedSkills();
   const tools = selectedTools();
@@ -276,6 +294,7 @@ function fullPrompt(text) {
     `Workspace VS Code: ${workspaceName()}`,
     workspaceRoot() ? `Diretorio raiz: ${workspaceRoot()}` : 'Diretorio raiz: nao ha pasta aberta',
     `Modelo selecionado: ${selectedModel}`,
+    selectedEffort !== 'auto' ? `Effort selecionado: ${selectedEffort}` : '',
     `Agente selecionado: ${selectedAgent}`,
     skills.length ? `Skills disponiveis: ${skills.join(', ')}` : '',
     tools.length ? `Tools disponiveis: ${tools.join(', ')}` : ''
@@ -484,6 +503,69 @@ function parseModelsFromText(text) {
   const matches = raw.match(/[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}/g) || [];
   for (const value of matches) if (looksLikeModel(value)) out.push(value);
   return Array.from(new Set(out.map(sanitizeModel))).filter(Boolean);
+}
+function manualEfforts() {
+  const list = cfg().get('effortsDisponiveis') || [];
+  return Array.isArray(list) ? list.map(String).map(s => s.trim()).filter(Boolean) : [];
+}
+function looksLikeEffort(value) {
+  const s = String(value || '').trim().toLowerCase();
+  if (!isSafeEffortId(s)) return false;
+  if (['effort', 'reasoning', 'level', 'value', 'default'].includes(s)) return false;
+  return COMMON_EFFORTS.includes(s) || /^(minimal|none|low|medium|high|xhigh|max|auto)$/.test(s);
+}
+function parseEffortSpecFromText(text) {
+  const raw = String(text || '');
+  const flagMatch = raw.match(/--(?:reasoning[-_]?)?effort\b|--effort\b/i);
+  if (!flagMatch) return { flag: '', values: [] };
+  const flag = flagMatch[0].toLowerCase().replace('_', '-');
+  const out = [];
+  const nearby = raw.slice(Math.max(0, flagMatch.index - 250), Math.min(raw.length, flagMatch.index + 700));
+  const possible = nearby.match(/(?:possible values?|values?|op(?:ç|c)(?:ões|oes)?|choices?)\s*[:=]\s*([^\]\)\n.]+)/i);
+  if (possible) {
+    const values = possible[1].match(/[a-zA-Z][a-zA-Z0-9._-]{1,40}/g) || [];
+    out.push(...values);
+  }
+  const quoted = nearby.match(/"([^"]{2,40})"|'([^']{2,40})'|`([^`]{2,40})`/g) || [];
+  for (const q of quoted) out.push(q.slice(1, -1));
+  if (!out.length) out.push(...COMMON_EFFORTS);
+  return {
+    flag,
+    values: Array.from(new Set(out.map(sanitizeEffort).filter(v => v && v !== 'auto' && looksLikeEffort(v))))
+  };
+}
+function discoverEffortsFromCli() {
+  return new Promise((resolve) => {
+    try {
+      cp.execFile(devinPath(), ['--help'], {
+        cwd: defaultCwd(),
+        timeout: Number(cfg().get('timeoutDescobertaModelosMs') || 2500),
+        windowsHide: true
+      }, (err, stdout, stderr) => {
+        const output = [stdout || '', stderr || ''].join('\n');
+        if (err && !output.trim()) { resolve({ flag: '', values: [] }); return; }
+        resolve(parseEffortSpecFromText(output));
+      });
+    } catch (_) { resolve({ flag: '', values: [] }); }
+  });
+}
+function effortFlagForCli() {
+  const configured = String(cfg().get('argumentoEffort') || '').trim();
+  if (configured) return configured;
+  return effortCache.flag || '';
+}
+function effortsForUi() {
+  const ttl = modelCacheMs();
+  const now = Date.now();
+  if (ttl > 0 && effortCache.values && now - effortCache.at < ttl) return effortCache.values;
+  const selected = currentEffort();
+  const manual = manualEfforts().map(sanitizeEffort).filter(v => v && v !== 'auto');
+  const detected = (effortCache.values || []).filter(v => v !== 'auto');
+  const hasFlag = !!effortFlagForCli();
+  const values = hasFlag || manual.length ? ['auto', selected, ...manual, ...detected] : [];
+  const result = Array.from(new Set(values.map(sanitizeEffort).filter(Boolean)));
+  effortCache = { ...effortCache, at: now, values: result };
+  return result;
 }
 
 function readModelsFromCaches() {
@@ -768,8 +850,9 @@ function updateStatusBar() {
     statusBar.command = 'devinCliChat.abrirPainel';
     statusBar.show();
   }
-  statusBar.text = `Devin: ${configuredModel()} / ${currentAgent()}`;
-  statusBar.tooltip = `Workspace: ${workspaceName()} | Modo: ${currentMode()} | Skills: ${selectedSkills().length}`;
+  const effort = currentEffort();
+  statusBar.text = `Devin: ${configuredModel()}${effort !== 'auto' ? ' / ' + effort : ''} / ${currentAgent()}`;
+  statusBar.tooltip = `Workspace: ${workspaceName()} | Modo: ${currentMode()} | Effort: ${effort} | Skills: ${selectedSkills().length}`;
 }
 async function pickManualModel() {
   const value = await vscode.window.showInputBox({
@@ -798,6 +881,27 @@ async function pickModel() {
   if (!pick) return;
   if (pick.startsWith('+')) return pickManualModel();
   await setConfig('modeloAtual', pick);
+}
+async function pickEffort() {
+  invalidateMetaCache();
+  const spec = await discoverEffortsFromCli();
+  if (spec && spec.flag) {
+    effortCache = { at: Date.now(), values: ['auto', ...spec.values], flag: spec.flag };
+    if (spec.values && spec.values.length) {
+      const merged = Array.from(new Set([...(cfg().get('effortsDisponiveis') || []), ...spec.values]));
+      await cfg().update('effortsDisponiveis', merged, vscode.ConfigurationTarget.Workspace);
+    }
+  }
+  const efforts = effortsForUi();
+  if (!efforts.length) {
+    vscode.window.showInformationMessage('Este Devin CLI nao expõe selecao de Effort na ajuda local.');
+    return;
+  }
+  const pick = await vscode.window.showQuickPick(efforts, {
+    placeHolder: 'Selecione o Effort do Devin'
+  });
+  if (!pick) return;
+  await setConfig('effortAtual', pick);
 }
 async function pickSkills() {
   const available = scanSkills();
@@ -924,6 +1028,7 @@ class ChatViewProvider {
       updatedAt: Date.now(),
       workspace: workspaceName(),
       model: configuredModel(),
+      effort: currentEffort(),
       agent: currentAgent(),
       mode: currentMode(),
       skills: selectedSkills(),
@@ -985,6 +1090,10 @@ class ChatViewProvider {
         if (type === 'send') { await this.send(message.text || '', { echoUser: message.echo !== false, displayText: message.displayText || message.text || '', hasExplicitContext: !!message.hasExplicitContext }); return; }
         if (type === 'setModel') {
           await setConfig('modeloAtual', sanitizeModel(message.value || 'auto'));
+          return;
+        }
+        if (type === 'setEffort') {
+          await setConfig('effortAtual', sanitizeEffort(message.value || 'auto'));
           return;
         }
         if (type === 'setAgent') { await setConfig('agenteAtual', message.value || 'auto'); return; }
@@ -1404,6 +1513,8 @@ class ChatViewProvider {
       type: 'meta',
       models: FALLBACK_MODELS,
       model: configuredModel(),
+      efforts: [],
+      effort: currentEffort(),
       agents: ['auto'],
       agent: currentAgent(),
       skills: [],
@@ -1421,6 +1532,7 @@ class ChatViewProvider {
       modelStatus: 'modelo: auto'
     };
     try { payload.models = modelsForUi(); } catch (_) { payload.models = FALLBACK_MODELS; }
+    try { payload.efforts = effortsForUi(); } catch (_) { payload.efforts = []; }
     try { payload.agents = scanAgents(); } catch (_) { payload.agents = ['auto']; }
     try { payload.skills = scanSkills(); } catch (_) { payload.skills = []; }
     try { payload.tools = scanTools(); } catch (_) { payload.tools = []; }
@@ -1433,9 +1545,10 @@ class ChatViewProvider {
         model: s.model || 'auto'
       }));
     } catch (_) { payload.recentSessions = []; }
-    try { payload.modelStatus = `${payload.models.length} modelos | ${payload.skills.length} skills | ${payload.tools.length} tools`; } catch (_) {}
+    try { payload.modelStatus = `${payload.models.length} modelos | ${payload.efforts.length ? payload.efforts.length + ' efforts | ' : ''}${payload.skills.length} skills | ${payload.tools.length} tools`; } catch (_) {}
     this.post(payload);
     this.refreshModelsFromCliInBackground();
+    this.refreshEffortsFromCliInBackground();
   }
 
   refreshModelsFromCliInBackground() {
@@ -1453,6 +1566,24 @@ class ChatViewProvider {
     }).catch(err => {
       log('Falha ao descobrir modelos em background: ' + (err && err.message ? err.message : String(err)));
     }).finally(() => { this.refreshingModels = false; });
+  }
+
+  refreshEffortsFromCliInBackground() {
+    if (!cfg().get('descobrirModelosAutomaticamente', true)) return;
+    if (this.refreshingEfforts) return;
+    this.refreshingEfforts = true;
+    discoverEffortsFromCli().then(async spec => {
+      if (spec && spec.flag) {
+        effortCache = { at: Date.now(), values: ['auto', ...spec.values], flag: spec.flag };
+        if (spec.values && spec.values.length) {
+          const merged = Array.from(new Set([...(cfg().get('effortsDisponiveis') || []), ...spec.values]));
+          await cfg().update('effortsDisponiveis', merged, vscode.ConfigurationTarget.Workspace);
+        }
+        this.post({ type: 'meta', efforts: effortsForUi(), effort: currentEffort() });
+      }
+    }).catch(err => {
+      log('Falha ao descobrir efforts em background: ' + (err && err.message ? err.message : String(err)));
+    }).finally(() => { this.refreshingEfforts = false; });
   }
 
   async send(text, options) {
@@ -1532,19 +1663,13 @@ class ChatViewProvider {
       close: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
       send: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 13.5L14 8 2 2.5 2 7l8 1-8 1z"/></svg>',
       brain: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3a2 2 0 0 0-2 2 2 2 0 0 0-1 3.5 2 2 0 0 0 1.5 3 2 2 0 0 0 3.5 0V3.5A1.5 1.5 0 0 0 5.5 3z"/><path d="M10.5 3a2 2 0 0 1 2 2 2 2 0 0 1 1 3.5 2 2 0 0 1-1.5 3 2 2 0 0 1-3.5 0V3.5A1.5 1.5 0 0 1 10.5 3z"/></svg>',
+      gauge: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11a5.5 5.5 0 1 1 10 0"/><path d="M8 8l3-3"/><path d="M5 12h6"/></svg>',
       bot: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5.5" width="10" height="7" rx="1.5"/><path d="M8 3v2.5M5.5 8.5h.01M10.5 8.5h.01M2 9.5v1.5M14 9.5v1.5"/></svg>',
       mode: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5.5h12M2 8h8M2 10.5h10"/></svg>',
       sparkle: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2l1.2 3.4L12.5 6.5 9.2 7.6 8 11l-1.2-3.4L3.5 6.5 6.8 5.4z"/></svg>',
       wrench: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M10.8 2.2a3.2 3.2 0 0 0-3.7 4.1L2.6 10.8a1.7 1.7 0 0 0 2.4 2.4l4.5-4.5a3.2 3.2 0 0 0 4.1-3.7l-2.2 2.2-2.1-.5-.5-2.1z"/></svg>',
       caret: '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M5 3l6 5-6 5z"/></svg>'
     };
-    const MODEL_TREE = [
-      { label: 'auto', value: 'auto' },
-      { label: 'sonnet', value: 'sonnet' },
-      { label: 'opus', value: 'opus' },
-      { label: 'swe', value: 'swe' },
-      { label: 'gpt', value: 'gpt' }
-    ];
     return `<!doctype html><html lang="pt-BR"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>
 :root{--bg:var(--vscode-sideBar-background);--fg:var(--vscode-foreground);--muted:var(--vscode-descriptionForeground);--border:var(--vscode-panel-border);--input:var(--vscode-input-background);--input-fg:var(--vscode-input-foreground);--focus:var(--vscode-focusBorder);--accent:var(--vscode-button-background);--accent-fg:var(--vscode-button-foreground);--editor:var(--vscode-editor-background);--hover:var(--vscode-list-hoverBackground);--active:var(--vscode-list-activeSelectionBackground);--active-fg:var(--vscode-list-activeSelectionForeground);--code:var(--vscode-textCodeBlock-background)}
 *{box-sizing:border-box}html,body{width:100%;height:100%;padding:0;margin:0;overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--vscode-font-family);font-size:var(--vscode-font-size)}
@@ -1711,6 +1836,7 @@ body.narrow .modelLockBadge.show span{display:none}
     <div class="composerBar">
       <button type="button" class="chipBtn" data-action="attachMenu" id="attachBtn" title="Anexar contexto">${ICONS.attach}<span class="chipText">Anexar</span></button>
       <button type="button" class="chipBtn" data-action="openModelMenu" id="modelChip" title="Modelo">${ICONS.brain}<span class="chipText" id="modelChipText">Modelo</span><span class="caret">${ICONS.caret}</span></button>
+      <button type="button" class="chipBtn" data-action="openEffortMenu" id="effortChip" title="Effort" style="display:none">${ICONS.gauge}<span class="chipText" id="effortChipText">Effort</span><span class="caret">${ICONS.caret}</span></button>
       <button type="button" class="chipBtn" data-action="openAgentMenu" id="agentChip" title="Agente">${ICONS.bot}<span class="chipText" id="agentChipText">Agente</span><span class="caret">${ICONS.caret}</span></button>
       <button type="button" class="chipBtn" data-action="openSkillsMenu" id="skillsBtn" title="Skills">${ICONS.sparkle}<span class="chipText">Skills <span id="skillsCount">0</span></span></button>
       <button type="button" class="chipBtn" data-action="openToolsMenu" id="toolsBtn" title="Tools">${ICONS.wrench}<span class="chipText">Tools <span id="toolsCount">0</span></span></button>
@@ -1728,8 +1854,7 @@ body.narrow .modelLockBadge.show span{display:none}
 'use strict';
 var vscode = acquireVsCodeApi();
 var ICONS = ${JSON.stringify(ICONS)};
-var MODEL_TREE = ${JSON.stringify(MODEL_TREE)};
-var META = { skills: [], selectedSkills: [], tools: [], selectedTools: [], modelLocked: false, hasMessages: false, model: 'auto', agent: 'auto', mode: 'resposta-integrada', agents: ['auto'], tokensTotal: 0, tokensIn: 0, tokensOut: 0, recentSessions: [] };
+var META = { models: ['auto'], efforts: [], skills: [], selectedSkills: [], tools: [], selectedTools: [], modelLocked: false, hasMessages: false, model: 'auto', effort: 'auto', agent: 'auto', mode: 'resposta-integrada', agents: ['auto'], tokensTotal: 0, tokensIn: 0, tokensOut: 0, recentSessions: [] };
 var busy = false;
 var pendingSelection = null;
 var attachedItems = [];
@@ -1978,7 +2103,7 @@ function closeAllMenus(){
   openMenu = null;
 }
 
-function buildMenu(items, anchor, onPick, level){
+function buildMenu(items, anchor, onPick, level, selectedValue){
   var menu = document.createElement('div'); menu.className = 'menu';
   menu.dataset.level = level;
   if(!items || !items.length){ var e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Nenhuma opcao'; menu.appendChild(e); }
@@ -1993,12 +2118,12 @@ function buildMenu(items, anchor, onPick, level){
         document.querySelectorAll('.menu').forEach(function(m){ if(Number(m.dataset.level) > level) m.parentNode && m.parentNode.removeChild(m); });
         Array.prototype.slice.call(menu.querySelectorAll('.item.activeHover')).forEach(function(x){ x.classList.remove('activeHover'); });
         row.classList.add('activeHover');
-        var sub = buildMenu(it.children, row, onPick, level + 1);
+        var sub = buildMenu(it.children, row, onPick, level + 1, selectedValue);
         positionMenuBeside(sub, row);
       });
       row.addEventListener('click', function(ev){ ev.stopPropagation(); });
     } else {
-      if(it.value === META.model) row.classList.add('selected');
+      if(it.value === selectedValue) row.classList.add('selected');
       row.addEventListener('mouseenter', function(){
         document.querySelectorAll('.menu').forEach(function(m){ if(Number(m.dataset.level) > level) m.parentNode && m.parentNode.removeChild(m); });
       });
@@ -2034,9 +2159,22 @@ function positionMenuBeside(menu, anchorRow){
 function openModelMenu(){
   closeAllMenus();
   var anchor = byId('modelChip');
-  var menu = buildMenu(MODEL_TREE, anchor, function(value){ post({ type: 'setModel', value: value || 'auto' }); }, 1);
+  var models = META.models && META.models.length ? META.models : ['auto'];
+  var items = models.map(function(model){ return { label: model, value: model }; });
+  var menu = buildMenu(items, anchor, function(value){ post({ type: 'setModel', value: value || 'auto' }); }, 1, META.model || 'auto');
   positionMenuAnchor(menu, anchor);
   openMenu = 'model';
+}
+
+function openEffortMenu(){
+  closeAllMenus();
+  var anchor = byId('effortChip');
+  var efforts = META.efforts && META.efforts.length ? META.efforts : [];
+  if(!anchor || !efforts.length) return;
+  var items = efforts.map(function(effort){ return { label: effort, value: effort }; });
+  var menu = buildMenu(items, anchor, function(value){ post({ type: 'setEffort', value: value || 'auto' }); }, 1, META.effort || 'auto');
+  positionMenuAnchor(menu, anchor);
+  openMenu = 'effort';
 }
 
 function openAgentMenu(){
@@ -2298,6 +2436,7 @@ function action(name, element){
   if(name === 'openToolsMenu') return openToolsMenu();
   if(name === 'clearHistory'){ post({ type: 'clearHistory' }); return; }
   if(name === 'openModelMenu') return openModelMenu();
+  if(name === 'openEffortMenu') return openEffortMenu();
   if(name === 'openAgentMenu') return openAgentMenu();
   if(name === 'attachMenu') return post({ type: 'attachMenu' });
   if(name === 'verifyCli') return post({ type: 'verifyCli' });
@@ -2330,18 +2469,25 @@ window.addEventListener('unhandledrejection', function(ev){ clientError('promise
 window.addEventListener('message', function(ev){
   var m = ev.data || {};
   if(m.type === 'meta'){
-    META.skills = m.skills || []; META.selectedSkills = m.selectedSkills || [];
-    META.tools = m.tools || []; META.selectedTools = m.selectedTools || [];
-    META.modelLocked = !!m.modelLocked; META.hasMessages = !!m.hasMessages;
-    META.model = m.model || 'auto'; META.agent = m.agent || 'auto'; META.mode = 'resposta-integrada';
-    META.agents = m.agents || ['auto'];
-    META.tokensTotal = m.tokensTotal || 0; META.tokensIn = m.tokensIn || 0; META.tokensOut = m.tokensOut || 0;
-    META.recentSessions = m.recentSessions || [];
+    if(m.models) META.models = m.models || ['auto'];
+    if(m.efforts) META.efforts = m.efforts || [];
+    if(m.skills) META.skills = m.skills || []; if(m.selectedSkills) META.selectedSkills = m.selectedSkills || [];
+    if(m.tools) META.tools = m.tools || []; if(m.selectedTools) META.selectedTools = m.selectedTools || [];
+    if('modelLocked' in m) META.modelLocked = !!m.modelLocked; if('hasMessages' in m) META.hasMessages = !!m.hasMessages;
+    if('model' in m) META.model = m.model || 'auto'; if('effort' in m) META.effort = m.effort || 'auto'; if('agent' in m) META.agent = m.agent || 'auto'; META.mode = 'resposta-integrada';
+    if(m.agents) META.agents = m.agents || ['auto'];
+    if('tokensTotal' in m) META.tokensTotal = m.tokensTotal || 0; if('tokensIn' in m) META.tokensIn = m.tokensIn || 0; if('tokensOut' in m) META.tokensOut = m.tokensOut || 0;
+    if(m.recentSessions) META.recentSessions = m.recentSessions || [];
 
     var modelChip = byId('modelChip');
     var modelText = byId('modelChipText');
     if(modelText) modelText.textContent = META.model || 'Modelo';
     if(modelChip){ modelChip.disabled = false; modelChip.classList.toggle('has', !!META.model); }
+    var effortChip = byId('effortChip');
+    var effortText = byId('effortChipText');
+    var hasEfforts = !!(META.efforts && META.efforts.length);
+    if(effortChip){ effortChip.style.display = hasEfforts ? 'inline-flex' : 'none'; effortChip.classList.toggle('has', META.effort && META.effort !== 'auto'); }
+    if(effortText) effortText.textContent = META.effort === 'auto' ? 'Effort' : META.effort;
     var agentText = byId('agentChipText'); if(agentText) agentText.textContent = META.agent === 'auto' ? 'Agente' : META.agent;
     var agentChip = byId('agentChip'); if(agentChip) agentChip.classList.toggle('has', META.agent !== 'auto');
     var c = byId('skillsCount'); if(c) c.textContent = (META.selectedSkills || []).length;
@@ -2426,6 +2572,7 @@ async function activate(context) {
     if (provider) await provider.send('Analise o contexto do editor atual.\n\n' + activeContext());
   }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarModelo', pickModel));
+  context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarEffort', pickEffort));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.definirModeloManual', pickManualModel));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.atualizarModelos', async () => {
     invalidateMetaCache();
@@ -2490,5 +2637,5 @@ function deactivate() {
 module.exports = {
   activate,
   deactivate,
-  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, scanTools, skillNameFromMarkdownFile, importSkillMarkdownFile, importAgentMarkdownFile, importToolMarkdownFile, loadHistory, saveHistory, sanitizeModel, sanitizePromptText, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown, shouldApplyFirstInstallRightSidebar, applyFirstInstallRightSidebar }
+  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, effortsForUi, parseEffortSpecFromText, scanAgents, scanSkills, scanTools, skillNameFromMarkdownFile, importSkillMarkdownFile, importAgentMarkdownFile, importToolMarkdownFile, loadHistory, saveHistory, sanitizeModel, sanitizeEffort, sanitizePromptText, isSafeModelId, isSafeEffortId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown, shouldApplyFirstInstallRightSidebar, applyFirstInstallRightSidebar }
 };

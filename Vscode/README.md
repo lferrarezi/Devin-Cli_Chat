@@ -1,6 +1,6 @@
-# Devin Cli Chat — VS Code
+# Devin-Cli Chat for VS Code
 
-Painel de chat nativo para o **Devin CLI** dentro do VS Code, com interface em português brasileiro.  
+Painel de chat nativo para o **Devin CLI** dentro do VS Code, com interface no idioma do VS Code quando disponível.  
 Suporte a modelos, agentes, skills, anexos, histórico e contexto automático do editor.
 
 ---
@@ -23,7 +23,27 @@ Se o executável não estiver no PATH, configure o caminho completo em `devinCli
 ## Instalação da extensão
 
 **Via Marketplace** (recomendado):  
-Pesquise **Devin Cli Chat** no VS Code Marketplace e clique em **Install**.
+Pesquise **Devin-Cli Chat for VS Code** no VS Code Marketplace e clique em **Install**.
+
+### Contorno para erro de instalação pelo Marketplace
+
+Em alguns ambientes corporativos, o VS Code pode falhar ao instalar pelo Marketplace com erro semelhante a:
+
+```text
+End of central directory record signature not found. Either not a zip file, or file is truncated.
+```
+
+Quando isso acontecer, instale pela linha de comando usando o VSIX do Marketplace ou do GitHub:
+
+```bash
+code --install-extension lferrarezi.devin-cli-chat-vscode --force
+```
+
+Se o erro persistir, baixe o arquivo `.vsix` da [página de releases](https://github.com/lferrarezi/Devin-Cli_Chat/releases) e instale localmente:
+
+```bash
+code --install-extension devin-cli-chat-1.11.0.vsix --force
+```
 
 **Via VSIX** (manual):
 1. Baixe o VSIX da [página de releases](https://github.com/lferrarezi/Devin-Cli_Chat/releases).
@@ -62,7 +82,8 @@ Pesquise **Devin Cli Chat** no VS Code Marketplace e clique em **Install**.
   "devinCliChat.modeloAtual": "auto",
   "devinCliChat.modoExecucaoChat": "resposta-integrada",
   "devinCliChat.agenteAtual": "auto",
-  "devinCliChat.prefixoPromptPadrao": "Responda em português brasileiro..."
+  "devinCliChat.prefixoPromptPadrao": "",
+  "devinCliChat.usarBypass": false
 }
 ```
 
@@ -85,10 +106,9 @@ Valores inválidos são convertidos para `auto` automaticamente.
 
 ---
 
-## Modo de execução
+## Modo Bypass
 
-- **Integrado** (`resposta-integrada`): executa `devin -p` e exibe a resposta no chat.
-- **Terminal**: abre o terminal integrado com o comando pronto para execução manual.
+O checkbox **Bypass** no composer habilita `--permission-mode dangerous` no Devin CLI. Use apenas em workspaces confiáveis.
 
 ---
 
@@ -139,9 +159,8 @@ Ou execute **Devin Cli Chat: Verificar Devin CLI** na Command Palette — o Outp
 
 ### Resposta não aparece no chat
 
-1. Verifique o modo de execução — se for **Terminal**, a resposta não volta para o chat.
-2. Aguarde o timeout (padrão 5 min) ou aumente `devinCliChat.timeoutChatMs`.
-3. Verifique `View → Output → Devin Cli Chat` por erros de execução.
+1. Aguarde o timeout (padrão 5 min) ou aumente `devinCliChat.timeoutChatMs`.
+2. Verifique `View → Output → Devin Cli Chat` por erros de execução.
 
 ### Anexos não funcionam
 

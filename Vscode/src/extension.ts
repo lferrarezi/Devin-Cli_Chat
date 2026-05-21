@@ -17,7 +17,6 @@ const MODEL_TOKEN_BLOCKLIST = new Set([
   'print', 'verbose', 'debug', 'workspace', 'cache', 'team-settings', 'model-configs'
 ]);
 const HISTORY_KEY = 'devinCliChat.chatHistory.v1';
-const FIRST_INSTALL_LAYOUT_KEY = 'devinCliChat.firstInstallLayout.v1';
 const MAX_HISTORY = 50;
 const MAX_ATTACHMENT_BYTES = 1024 * 1024;
 const MAX_FOLDER_FILES = 50;
@@ -59,6 +58,78 @@ function isSafeEffortId(value) {
 }
 
 function cfg() { return vscode.workspace.getConfiguration(EXT); }
+function uiLanguage() {
+  const raw = String(vscode.env && vscode.env.language || 'en').toLowerCase();
+  return raw.startsWith('pt') ? 'pt' : 'en';
+}
+const I18N = {
+  pt: {
+    defaultPromptPrefix: 'Responda em português brasileiro. Seja objetivo, cite arquivos concretos e priorize impacto produtivo, segurança, testes e rollback.',
+    htmlLang: 'pt-BR',
+    product: 'Devin-Cli',
+    history: 'Historico',
+    clear: 'Limpar',
+    newChat: 'Nova conversa',
+    refreshModels: 'Atualizar modelos',
+    verifyCli: 'Verificar Devin CLI',
+    welcomeTitle: 'Como posso ajudar neste workspace?',
+    welcomeText: 'Selecione modelo, agente, skills, tools e Bypass antes de enviar. As ultimas conversas ficam disponiveis para continuar.',
+    recent: 'Conversas recentes',
+    reviewDiff: 'Revisar diff',
+    reviewDiffDesc: 'Analisa alteracoes locais.',
+    planTask: 'Planejar tarefa',
+    planTaskDesc: 'Plano objetivo antes de codar.',
+    explainContext: 'Explicar contexto',
+    explainContextDesc: 'Usa arquivo aberto ou selecao.',
+    planPrompt: 'Planeje a implementacao da proxima tarefa em etapas pequenas, com riscos, testes e estrategia de rollback.',
+    selectModel: 'Selecione um modelo',
+    beforeChat: 'antes de iniciar a conversa.',
+    placeholder: 'Escreva sua mensagem...',
+    attach: 'Anexar',
+    attachTitle: 'Anexar contexto',
+    model: 'Modelo',
+    agent: 'Agente',
+    bypass: 'Bypass',
+    bypassTitle: 'Modo Bypass (--permission-mode dangerous)',
+    cancel: 'Cancelar execucao',
+    send: 'Enviar'
+  },
+  en: {
+    defaultPromptPrefix: 'Answer in English. Be concise, cite concrete files, and prioritize productive impact, security, tests, and rollback.',
+    htmlLang: 'en',
+    product: 'Devin-Cli',
+    history: 'History',
+    clear: 'Clear',
+    newChat: 'New chat',
+    refreshModels: 'Refresh models',
+    verifyCli: 'Verify Devin CLI',
+    welcomeTitle: 'How can I help in this workspace?',
+    welcomeText: 'Select model, agent, skills, tools, and Bypass before sending. Recent chats remain available to continue.',
+    recent: 'Recent chats',
+    reviewDiff: 'Review diff',
+    reviewDiffDesc: 'Analyzes local changes.',
+    planTask: 'Plan task',
+    planTaskDesc: 'Objective plan before coding.',
+    explainContext: 'Explain context',
+    explainContextDesc: 'Uses the open file or selection.',
+    planPrompt: 'Plan the next task implementation in small steps, with risks, tests, and rollback strategy.',
+    selectModel: 'Select a model',
+    beforeChat: 'before starting the chat.',
+    placeholder: 'Write your message...',
+    attach: 'Attach',
+    attachTitle: 'Attach context',
+    model: 'Model',
+    agent: 'Agent',
+    bypass: 'Bypass',
+    bypassTitle: 'Bypass mode (--permission-mode dangerous)',
+    cancel: 'Cancel execution',
+    send: 'Send'
+  }
+};
+function tr(key) {
+  const lang = uiLanguage();
+  return (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key;
+}
 function workspaceRoot() {
   return vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0]
     ? vscode.workspace.workspaceFolders[0].uri.fsPath
@@ -121,6 +192,10 @@ function validateWebviewMessage(raw) {
   }
   if (type === 'searchWorkspaceFiles') {
     return { type, query: safeString(raw.query || '', 200) || '' };
+  }
+  if (type === 'setBypass') {
+    const value = safeBoolean(raw.value);
+    return value === undefined ? null : { type, value };
   }
   if (type === 'setModel' || type === 'setEffort' || type === 'setAgent' || type === 'toggleSkill' || type === 'toggleTool') {
     const value = safeString(raw.value, 200);
@@ -239,6 +314,7 @@ function selectedTools() {
   const list = cfg().get('toolsSelecionadas') || [];
   return Array.isArray(list) ? list.map(String).filter(Boolean) : [];
 }
+function bypassEnabled() { return !!cfg().get('usarBypass', false); }
 function devinPath() { return String(cfg().get('caminhoDevin') || 'devin'); }
 function defaultCwd() { return workspaceRoot() || os.homedir(); }
 
@@ -286,10 +362,18 @@ function baseArgs() {
   const selectedEffort = currentEffort();
   const effortFlag = effortFlagForCli();
   if (effortFlag && selectedEffort && selectedEffort !== 'auto') out.push(effortFlag, selectedEffort);
+  if (cfg().get('usarBypass', false)) {
+    const bypassFlag = String(cfg().get('argumentoBypass') || '--permission-mode').trim();
+    const bypassValue = String(cfg().get('valorBypass') || 'dangerous').trim();
+    if (bypassFlag && bypassValue) out.push(bypassFlag, bypassValue);
+  }
   return out;
 }
 function fullPrompt(text) {
-  const prefix = cfg().get('prefixoPromptPadrao') || '';
+  const configuredPrefix = cfg().get('prefixoPromptPadrao');
+  const prefix = configuredPrefix === undefined || configuredPrefix === null || String(configuredPrefix).trim() === ''
+    ? tr('defaultPromptPrefix')
+    : String(configuredPrefix);
   const selectedModel = modelForCli() || configuredModel() || 'auto';
   const selectedEffort = currentEffort();
   const selectedAgent = currentAgent();
@@ -995,27 +1079,10 @@ async function saveHistory(sessions) {
   try { if (extContext) await extContext.globalState.update(HISTORY_KEY, sessions.slice(0, MAX_HISTORY)); } catch (_) {}
 }
 function shouldApplyFirstInstallRightSidebar(context) {
-  try {
-    if (!context || !context.globalState) return false;
-    if (context.globalState.get(FIRST_INSTALL_LAYOUT_KEY)) return false;
-    const history = context.globalState.get(HISTORY_KEY) || [];
-    return !Array.isArray(history) || history.length === 0;
-  } catch (_) {
-    return false;
-  }
+  return false;
 }
 async function applyFirstInstallRightSidebar(context) {
-  if (!shouldApplyFirstInstallRightSidebar(context)) return false;
-  try {
-    await vscode.workspace.getConfiguration('workbench').update('sideBar.location', 'right', vscode.ConfigurationTarget.Global);
-    await context.globalState.update(FIRST_INSTALL_LAYOUT_KEY, true);
-    log('Primeira instalacao: sideBar.location definido como right.');
-    return true;
-  } catch (err) {
-    log('Falha ao posicionar sidebar a direita: ' + (err && err.message ? err.message : String(err)));
-    try { await context.globalState.update(FIRST_INSTALL_LAYOUT_KEY, true); } catch (_) {}
-    return false;
-  }
+  return false;
 }
 
 class ChatViewProvider {
@@ -1100,6 +1167,10 @@ class ChatViewProvider {
         }
         if (type === 'setEffort') {
           await setConfig('effortAtual', sanitizeEffort(message.value || 'auto'));
+          return;
+        }
+        if (type === 'setBypass') {
+          await setConfig('usarBypass', !!message.value);
           return;
         }
         if (type === 'setAgent') { await setConfig('agenteAtual', message.value || 'auto'); return; }
@@ -1526,6 +1597,8 @@ class ChatViewProvider {
       skills: [],
       selectedSkills: selectedSkills(),
       selectedTools: selectedTools(),
+      bypass: bypassEnabled(),
+      labels: I18N[uiLanguage()] || I18N.en,
       mode: currentMode(),
       workspace: workspaceName(),
       sessionId: this.session && this.session.id,
@@ -1676,7 +1749,8 @@ class ChatViewProvider {
       wrench: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M10.8 2.2a3.2 3.2 0 0 0-3.7 4.1L2.6 10.8a1.7 1.7 0 0 0 2.4 2.4l4.5-4.5a3.2 3.2 0 0 0 4.1-3.7l-2.2 2.2-2.1-.5-.5-2.1z"/></svg>',
       caret: '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M5 3l6 5-6 5z"/></svg>'
     };
-    return `<!doctype html><html lang="pt-BR"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>
+    const L = I18N[uiLanguage()] || I18N.en;
+    return `<!doctype html><html lang="${htmlEscape(L.htmlLang)}"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>
 :root{--bg:var(--vscode-sideBar-background);--fg:var(--vscode-foreground);--muted:var(--vscode-descriptionForeground);--border:var(--vscode-panel-border);--input:var(--vscode-input-background);--input-fg:var(--vscode-input-foreground);--focus:var(--vscode-focusBorder);--accent:var(--vscode-button-background);--accent-fg:var(--vscode-button-foreground);--editor:var(--vscode-editor-background);--hover:var(--vscode-list-hoverBackground);--active:var(--vscode-list-activeSelectionBackground);--active-fg:var(--vscode-list-activeSelectionForeground);--code:var(--vscode-textCodeBlock-background)}
 *{box-sizing:border-box}html,body{width:100%;height:100%;padding:0;margin:0;overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--vscode-font-family);font-size:var(--vscode-font-size)}
 button,select,textarea{font:inherit;color:inherit}
@@ -1731,6 +1805,8 @@ textarea{width:100%;min-height:62px;max-height:200px;resize:none;background:tran
 .chipBtn .chipText{overflow:hidden;text-overflow:ellipsis;max-width:120px}
 .chipBtn .caret{opacity:.6}
 .chipBtn svg{flex:0 0 auto}
+.chipBtn input{margin:0;accent-color:var(--accent)}
+.chipBtn input:checked + .chipText{color:var(--fg)}
 .modelLockBadge{display:none;align-items:center;gap:3px;font-size:10px;color:var(--muted);flex:0 0 auto}
 .modelLockBadge.show{display:inline-flex}
 .barSpacer{flex:1;min-width:6px}
@@ -1809,48 +1885,49 @@ body.narrow .modelLockBadge.show span{display:none}
 <header class="header">
   <div class="product">
     <div class="logo"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><defs><radialGradient id="hg" cx="50%" cy="40%" r="60%"><stop offset="0%" stop-color="#5eead4"/><stop offset="55%" stop-color="#22d3ee"/><stop offset="100%" stop-color="#0e7490"/></radialGradient></defs><g transform="translate(12 12)" fill="url(#hg)"><circle cx="0" cy="-5.5" r="3.2"/><circle cx="4.8" cy="-2.75" r="3.2"/><circle cx="4.8" cy="2.75" r="3.2"/><circle cx="0" cy="5.5" r="3.2"/><circle cx="-4.8" cy="2.75" r="3.2"/><circle cx="-4.8" cy="-2.75" r="3.2"/></g></svg></div>
-    <span>Devin Cli Chat</span>
+    <span>${htmlEscape(L.product)}</span>
   </div>
   <div class="headerSpacer"></div>
-  <button type="button" class="iconBtn" data-action="toggleHistory" title="Historico">${ICONS.history}</button>
-  <button type="button" class="iconBtn" data-action="newChat" title="Nova conversa">${ICONS.plus}</button>
-  <button type="button" class="iconBtn" data-action="refreshModels" title="Atualizar modelos">${ICONS.refresh}</button>
-  <button type="button" class="iconBtn" data-action="verifyCli" title="Verificar Devin CLI">i</button>
+  <button type="button" class="iconBtn" data-action="toggleHistory" title="${htmlEscape(L.history)}">${ICONS.history}</button>
+  <button type="button" class="iconBtn" data-action="newChat" title="${htmlEscape(L.newChat)}">${ICONS.plus}</button>
+  <button type="button" class="iconBtn" data-action="refreshModels" title="${htmlEscape(L.refreshModels)}">${ICONS.refresh}</button>
+  <button type="button" class="iconBtn" data-action="verifyCli" title="${htmlEscape(L.verifyCli)}">i</button>
 </header>
-<div id="historyPanel" class="panel"><header>Historico <div class="barSpacer"></div><button data-action="clearHistory">Limpar</button></header><div id="historyList"></div></div>
+<div id="historyPanel" class="panel"><header>${htmlEscape(L.history)} <div class="barSpacer"></div><button data-action="clearHistory">${htmlEscape(L.clear)}</button></header><div id="historyList"></div></div>
 
 <main class="thread" id="thread">
   <section class="welcome" id="welcome">
-    <div class="welcomeTitle">Como posso ajudar neste workspace?</div>
-    <div class="welcomeText">Selecione modelo, agente, skills e tools antes de enviar. As ultimas conversas ficam disponiveis para continuar.</div>
+    <div class="welcomeTitle">${htmlEscape(L.welcomeTitle)}</div>
+    <div class="welcomeText">${htmlEscape(L.welcomeText)}</div>
     <div id="recentBlock" class="recentBlock" style="display:none">
-      <div class="recentHead">${ICONS.history} Conversas recentes</div>
+      <div class="recentHead">${ICONS.history} ${htmlEscape(L.recent)}</div>
       <div id="recentList"></div>
     </div>
     <div class="starterGrid">
-      <button type="button" class="starter" data-action="review"><b>Revisar diff</b><span>Analisa alteracoes locais.</span></button>
-      <button type="button" class="starter" data-action="starter" data-prompt="Planeje a implementacao da proxima tarefa em etapas pequenas, com riscos, testes e estrategia de rollback."><b>Planejar tarefa</b><span>Plano objetivo antes de codar.</span></button>
-      <button type="button" class="starter" data-action="selection"><b>Explicar contexto</b><span>Usa arquivo aberto ou selecao.</span></button>
+      <button type="button" class="starter" data-action="review"><b>${htmlEscape(L.reviewDiff)}</b><span>${htmlEscape(L.reviewDiffDesc)}</span></button>
+      <button type="button" class="starter" data-action="starter" data-prompt="${htmlEscape(L.planPrompt)}"><b>${htmlEscape(L.planTask)}</b><span>${htmlEscape(L.planTaskDesc)}</span></button>
+      <button type="button" class="starter" data-action="selection"><b>${htmlEscape(L.explainContext)}</b><span>${htmlEscape(L.explainContextDesc)}</span></button>
     </div>
   </section>
 </main>
 <footer class="composerWrap">
-  <div id="modelGate" class="modelGate"><b>Selecione um modelo</b><span>antes de iniciar a conversa.</span></div>
+  <div id="modelGate" class="modelGate"><b>${htmlEscape(L.selectModel)}</b><span>${htmlEscape(L.beforeChat)}</span></div>
   <div class="composer">
     <div id="contextChips" class="contextChips"></div>
-    <div class="inputLine"><textarea id="prompt" placeholder="Escreva sua mensagem..."></textarea></div>
+    <div class="inputLine"><textarea id="prompt" placeholder="${htmlEscape(L.placeholder)}"></textarea></div>
     <div class="composerBar">
-      <button type="button" class="chipBtn" data-action="attachMenu" id="attachBtn" title="Anexar contexto">${ICONS.attach}<span class="chipText">Anexar</span></button>
-      <button type="button" class="chipBtn" data-action="openModelMenu" id="modelChip" title="Modelo">${ICONS.brain}<span class="chipText" id="modelChipText">Modelo</span><span class="caret">${ICONS.caret}</span></button>
+      <button type="button" class="chipBtn" data-action="attachMenu" id="attachBtn" title="${htmlEscape(L.attachTitle)}">${ICONS.attach}<span class="chipText">${htmlEscape(L.attach)}</span></button>
+      <button type="button" class="chipBtn" data-action="openModelMenu" id="modelChip" title="${htmlEscape(L.model)}">${ICONS.brain}<span class="chipText" id="modelChipText">${htmlEscape(L.model)}</span><span class="caret">${ICONS.caret}</span></button>
       <button type="button" class="chipBtn" data-action="openEffortMenu" id="effortChip" title="Effort" style="display:none">${ICONS.gauge}<span class="chipText" id="effortChipText">Effort</span><span class="caret">${ICONS.caret}</span></button>
-      <button type="button" class="chipBtn" data-action="openAgentMenu" id="agentChip" title="Agente">${ICONS.bot}<span class="chipText" id="agentChipText">Agente</span><span class="caret">${ICONS.caret}</span></button>
+      <button type="button" class="chipBtn" data-action="openAgentMenu" id="agentChip" title="${htmlEscape(L.agent)}">${ICONS.bot}<span class="chipText" id="agentChipText">${htmlEscape(L.agent)}</span><span class="caret">${ICONS.caret}</span></button>
       <button type="button" class="chipBtn" data-action="openSkillsMenu" id="skillsBtn" title="Skills">${ICONS.sparkle}<span class="chipText">Skills <span id="skillsCount">0</span></span></button>
       <button type="button" class="chipBtn" data-action="openToolsMenu" id="toolsBtn" title="Tools">${ICONS.wrench}<span class="chipText">Tools <span id="toolsCount">0</span></span></button>
+      <label class="chipBtn" id="bypassChip" title="${htmlEscape(L.bypassTitle)}"><input type="checkbox" id="bypassToggle"><span class="chipText">${htmlEscape(L.bypass)}</span></label>
       <span class="barSpacer"></span>
       <span class="busyDot"></span>
       <span class="tokenPie" id="tokenPie" title="Tokens"></span>
-      <button class="stopBtn" id="cancel" type="button" data-action="cancelRun" title="Cancelar execucao">×</button>
-      <button class="sendBtn" id="send" type="button" data-action="send" title="Enviar">${ICONS.send}</button>
+      <button class="stopBtn" id="cancel" type="button" data-action="cancelRun" title="${htmlEscape(L.cancel)}">×</button>
+      <button class="sendBtn" id="send" type="button" data-action="send" title="${htmlEscape(L.send)}">${ICONS.send}</button>
     </div>
   </div>
 </footer>
@@ -1860,7 +1937,7 @@ body.narrow .modelLockBadge.show span{display:none}
 'use strict';
 var vscode = acquireVsCodeApi();
 var ICONS = ${JSON.stringify(ICONS)};
-var META = { models: ['auto'], efforts: [], skills: [], selectedSkills: [], tools: [], selectedTools: [], modelLocked: false, hasMessages: false, model: 'auto', effort: 'auto', agent: 'auto', mode: 'resposta-integrada', agents: ['auto'], tokensTotal: 0, tokensIn: 0, tokensOut: 0, recentSessions: [] };
+var META = { models: ['auto'], efforts: [], skills: [], selectedSkills: [], tools: [], selectedTools: [], modelLocked: false, hasMessages: false, model: 'auto', effort: 'auto', agent: 'auto', bypass: false, mode: 'resposta-integrada', agents: ['auto'], tokensTotal: 0, tokensIn: 0, tokensOut: 0, recentSessions: [], labels: { model: '${htmlEscape(L.model)}', agent: '${htmlEscape(L.agent)}' } };
 var busy = false;
 var pendingSelection = null;
 var attachedItems = [];
@@ -2462,6 +2539,10 @@ if(pe){
   pe.addEventListener('keydown', function(ev){ if(ev.key === 'Enter' && !ev.shiftKey){ ev.preventDefault(); sendPrompt(getPrompt()); } });
   pe.addEventListener('input', function(){ updateTokens(); updateSuggestions(); });
 }
+var bt = byId('bypassToggle');
+if(bt){
+  bt.addEventListener('change', function(){ post({ type: 'setBypass', value: !!bt.checked }); });
+}
 
 function applyResponsive(){
   var w = window.innerWidth;
@@ -2476,26 +2557,29 @@ window.addEventListener('message', function(ev){
   var m = ev.data || {};
   if(m.type === 'meta'){
     if(m.models) META.models = m.models || ['auto'];
+    if(m.labels) META.labels = m.labels || META.labels;
     if(m.efforts) META.efforts = m.efforts || [];
     if(m.skills) META.skills = m.skills || []; if(m.selectedSkills) META.selectedSkills = m.selectedSkills || [];
     if(m.tools) META.tools = m.tools || []; if(m.selectedTools) META.selectedTools = m.selectedTools || [];
     if('modelLocked' in m) META.modelLocked = !!m.modelLocked; if('hasMessages' in m) META.hasMessages = !!m.hasMessages;
-    if('model' in m) META.model = m.model || 'auto'; if('effort' in m) META.effort = m.effort || 'auto'; if('agent' in m) META.agent = m.agent || 'auto'; META.mode = 'resposta-integrada';
+    if('model' in m) META.model = m.model || 'auto'; if('effort' in m) META.effort = m.effort || 'auto'; if('agent' in m) META.agent = m.agent || 'auto'; if('bypass' in m) META.bypass = !!m.bypass; META.mode = 'resposta-integrada';
     if(m.agents) META.agents = m.agents || ['auto'];
     if('tokensTotal' in m) META.tokensTotal = m.tokensTotal || 0; if('tokensIn' in m) META.tokensIn = m.tokensIn || 0; if('tokensOut' in m) META.tokensOut = m.tokensOut || 0;
     if(m.recentSessions) META.recentSessions = m.recentSessions || [];
 
     var modelChip = byId('modelChip');
     var modelText = byId('modelChipText');
-    if(modelText) modelText.textContent = META.model || 'Modelo';
+    if(modelText) modelText.textContent = META.model || META.labels.model || 'Model';
     if(modelChip){ modelChip.disabled = false; modelChip.classList.toggle('has', !!META.model); }
     var effortChip = byId('effortChip');
     var effortText = byId('effortChipText');
     var hasEfforts = !!(META.efforts && META.efforts.length);
     if(effortChip){ effortChip.style.display = hasEfforts ? 'inline-flex' : 'none'; effortChip.classList.toggle('has', META.effort && META.effort !== 'auto'); }
     if(effortText) effortText.textContent = META.effort === 'auto' ? 'Effort' : META.effort;
-    var agentText = byId('agentChipText'); if(agentText) agentText.textContent = META.agent === 'auto' ? 'Agente' : META.agent;
+    var agentText = byId('agentChipText'); if(agentText) agentText.textContent = META.agent === 'auto' ? (META.labels.agent || 'Agent') : META.agent;
     var agentChip = byId('agentChip'); if(agentChip) agentChip.classList.toggle('has', META.agent !== 'auto');
+    var bypassToggle = byId('bypassToggle'); if(bypassToggle) bypassToggle.checked = !!META.bypass;
+    var bypassChip = byId('bypassChip'); if(bypassChip) bypassChip.classList.toggle('has', !!META.bypass);
     var c = byId('skillsCount'); if(c) c.textContent = (META.selectedSkills || []).length;
     var sb = byId('skillsBtn'); if(sb) sb.classList.toggle('has', (META.selectedSkills || []).length > 0);
     var tc = byId('toolsCount'); if(tc) tc.textContent = (META.selectedTools || []).length;
@@ -2556,7 +2640,6 @@ async function activate(context) {
   log(`Plataforma: ${process.platform} ${process.arch}`);
   log(`Devin CLI path configurado: ${devinPath()}`);
   log(`Workspace: ${workspaceRoot() || 'nenhum'}`);
-  await applyFirstInstallRightSidebar(context);
   provider = new ChatViewProvider(context);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider('devinCliChat.chatView', provider, { webviewOptions: { retainContextWhenHidden: true } }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.abrirPainel', async () => vscode.commands.executeCommand('workbench.view.extension.devinCliChat')));
@@ -2643,5 +2726,5 @@ function deactivate() {
 module.exports = {
   activate,
   deactivate,
-  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, parseModelsFromText, effortsForUi, parseEffortSpecFromText, scanAgents, scanSkills, scanTools, skillNameFromMarkdownFile, importSkillMarkdownFile, importAgentMarkdownFile, importToolMarkdownFile, loadHistory, saveHistory, sanitizeModel, sanitizeEffort, sanitizePromptText, isSafeModelId, isSafeEffortId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown, shouldApplyFirstInstallRightSidebar, applyFirstInstallRightSidebar }
+  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, parseModelsFromText, effortsForUi, parseEffortSpecFromText, scanAgents, scanSkills, scanTools, skillNameFromMarkdownFile, importSkillMarkdownFile, importAgentMarkdownFile, importToolMarkdownFile, loadHistory, saveHistory, sanitizeModel, sanitizeEffort, sanitizePromptText, isSafeModelId, isSafeEffortId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown, uiLanguage, tr }
 };

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.11.0
+
+- Pre-release com nome exibido `Devin-Cli Chat for VS Code`.
+- Remove o ajuste automatico que movia a Primary Sidebar do VS Code para a direita no primeiro uso.
+- Adiciona checkbox de Bypass no composer, persistindo `devinCliChat.usarBypass` e enviando `--permission-mode dangerous` quando habilitado.
+- Faz a interface e o prefixo padrao acompanharem o idioma do VS Code entre portugues e ingles.
+- Documenta instalacao alternativa por linha de comando para ambientes corporativos onde o Marketplace falha ao baixar a assinatura do VSIX.
+
 ## 1.10.4
 
 - Ajusta o nome exibido da nova publicacao do Marketplace para `Devin-Cli`.

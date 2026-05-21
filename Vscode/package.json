@@ -1,8 +1,8 @@
 {
 	"name": "devin-cli-chat-vscode",
-	"displayName": "Devin-Cli",
+	"displayName": "Devin-Cli Chat for VS Code",
 	"description": "Tela propria de chat para Devin CLI no VS Code, em portugues brasileiro, com contexto compacto, aliases reais do CLI e anexos resilientes.",
-	"version": "1.10.4",
+	"version": "1.11.0",
 	"publisher": "lferrarezi",
 	"author": {
 		"name": "Luiz Alberto Abarca Ferrarezi"
@@ -302,8 +302,23 @@
 				},
 				"devinCliChat.prefixoPromptPadrao": {
 					"type": "string",
-					"default": "Responda em português brasileiro. Seja objetivo, cite arquivos concretos e priorize impacto produtivo, segurança, testes e rollback.",
-					"description": "Prefixo aplicado a prompts enviados ao Devin CLI."
+					"default": "",
+					"description": "Prefixo aplicado a prompts enviados ao Devin CLI. Quando vazio, a extensao usa um prefixo padrao no idioma do VS Code."
+				},
+				"devinCliChat.usarBypass": {
+					"type": "boolean",
+					"default": false,
+					"description": "Quando habilitado, executa o Devin CLI em modo Bypass usando --permission-mode dangerous. Use apenas em workspaces confiaveis."
+				},
+				"devinCliChat.argumentoBypass": {
+					"type": "string",
+					"default": "--permission-mode",
+					"description": "Flag usada para ativar o modo Bypass no Devin CLI."
+				},
+				"devinCliChat.valorBypass": {
+					"type": "string",
+					"default": "dangerous",
+					"description": "Valor enviado junto da flag de Bypass. Para o Devin CLI atual, use dangerous."
 				},
 				"devinCliChat.usarGitBashNoWindows": {
 					"type": "boolean",

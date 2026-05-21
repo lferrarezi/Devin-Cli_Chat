@@ -24,6 +24,9 @@ const mockConfigValues = {
   agenteAtual: 'auto',
   modoExecucaoChat: 'resposta-integrada',
   prefixoPromptPadrao: '',
+  usarBypass: false,
+  argumentoBypass: '--permission-mode',
+  valorBypass: 'dangerous',
   cacheModelosMs: 0,           // desabilita cache nos testes
   timeoutChatMs: 300000,
   timeoutDescobertaModelosMs: 100,
@@ -56,6 +59,9 @@ const mockGlobalState = new Map();
 const mockConfigUpdates = [];
 
 const mockVscode = {
+  env: {
+    language: 'pt-br',
+  },
   workspace: {
     getConfiguration: (_ext) => ({
       get: (key, def) => {
@@ -163,7 +169,8 @@ const {
   validateWebviewMessage,
   expandSlashCommand,
   exportSessionMarkdown,
-  shouldApplyFirstInstallRightSidebar,
+  uiLanguage,
+  tr,
 } = ext._internal;
 
 // ── Mini runner de testes ─────────────────────────────────────────────────────
@@ -344,6 +351,14 @@ test('effort=high envia --effort high quando flag configurada', () => {
   assert.ok(args.includes('high'), 'deve conter high');
   mockConfigValues.effortAtual = 'auto';
   mockConfigValues.argumentoEffort = '';
+});
+
+test('bypass habilitado envia --permission-mode dangerous', () => {
+  mockConfigValues.usarBypass = true;
+  const args = baseArgs();
+  assert.ok(args.includes('--permission-mode'), 'deve conter flag de bypass');
+  assert.ok(args.includes('dangerous'), 'deve conter valor dangerous');
+  mockConfigValues.usarBypass = false;
 });
 
 // ── Testes: fullPrompt ────────────────────────────────────────────────────────
@@ -589,6 +604,12 @@ test('script da webview usa modelos dinamicos e menu de Effort', () => {
   assert.ok(script.includes("post({ type: 'setEffort'"), 'deve enviar setEffort ao backend');
 });
 
+test('script da webview tem checkbox de Bypass', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'extension.ts'), 'utf8');
+  assert.ok(src.includes('bypassToggle'), 'deve conter checkbox de Bypass');
+  assert.ok(src.includes("post({ type: 'setBypass'"), 'deve enviar setBypass ao backend');
+});
+
 // ── Testes: automaticEditorContext ────────────────────────────────────────────
 console.log('\n── automaticEditorContext ──');
 
@@ -828,6 +849,10 @@ test('validateWebviewMessage aceita setEffort', () => {
   assert.deepStrictEqual(validateWebviewMessage({ type: 'setEffort', value: 'high' }), { type: 'setEffort', value: 'high' });
 });
 
+test('validateWebviewMessage aceita setBypass', () => {
+  assert.deepStrictEqual(validateWebviewMessage({ type: 'setBypass', value: true }), { type: 'setBypass', value: true });
+});
+
 test('validateWebviewMessage aceita busca de arquivos do workspace', () => {
   assert.deepStrictEqual(validateWebviewMessage({ type: 'searchWorkspaceFiles', query: 'src/ext' }), { type: 'searchWorkspaceFiles', query: 'src/ext' });
 });
@@ -859,23 +884,18 @@ test('exportSessionMarkdown gera markdown com metadados e mensagens', () => {
   assert.ok(md.includes('## Assistant'));
 });
 
-// ── Testes: layout inicial ───────────────────────────────────────────────────
-console.log('\n── layout inicial ──');
+// ── Testes: layout inicial e idioma ──────────────────────────────────────────
+console.log('\n── layout inicial e idioma ──');
 
-test('shouldApplyFirstInstallRightSidebar aplica apenas sem flag e sem historico', () => {
-  const context = {
-    globalState: {
-      get: (key) => mockGlobalState.get(key),
-    },
-  };
-  mockGlobalState.clear();
-  assert.strictEqual(shouldApplyFirstInstallRightSidebar(context), true);
-  mockGlobalState.set('devinCliChat.chatHistory.v1', [{ id: 'sess-1' }]);
-  assert.strictEqual(shouldApplyFirstInstallRightSidebar(context), false);
-  mockGlobalState.clear();
-  mockGlobalState.set('devinCliChat.firstInstallLayout.v1', true);
-  assert.strictEqual(shouldApplyFirstInstallRightSidebar(context), false);
-  mockGlobalState.clear();
+test('activate nao tenta mover a Primary Sidebar para a direita', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'extension.ts'), 'utf8');
+  assert.ok(!src.includes('workbench.action.toggleSidebarPosition'), 'nao deve alternar a posicao da sidebar');
+  assert.ok(!src.includes('sideBar.location'), 'nao deve alterar sideBar.location');
+});
+
+test('idioma do VS Code define prefixo padrao', () => {
+  assert.strictEqual(uiLanguage(), 'pt');
+  assert.ok(tr('defaultPromptPrefix').includes('português brasileiro'));
 });
 
 // ── Teste: activate smoke ─────────────────────────────────────────────────────

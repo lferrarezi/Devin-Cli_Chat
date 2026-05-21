@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.10.3
+
+- Ajusta o nome exibido da nova publicacao para `Devin Cli Chat VSCode`, necessario para publicar sob o owner `lferrarezi` sem conflitar com a publicacao antiga.
+
 ## 1.10.2
 
 - Ajusta o ID tecnico da extensao para `devin-cli-chat-vscode`, necessario para publicar sob o novo publisher `lferrarezi`.

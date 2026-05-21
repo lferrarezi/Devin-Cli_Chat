@@ -137,6 +137,9 @@ const {
   cancelIntegratedRun,
   automaticEditorContext,
   resolveWorkspacePathSafe,
+  registerRunState,
+  unregisterRunState,
+  activeRunIds,
 } = ext._internal;
 
 // ── Mini runner de testes ─────────────────────────────────────────────────────
@@ -592,6 +595,28 @@ test('publish workflow calcula flag de pre-release para versão menor ímpar', (
   assert.ok(workflow.includes('minor % 2 === 1'), 'workflow deve detectar versão menor ímpar');
   assert.ok(workflow.includes('--pre-release'), 'workflow deve empacotar/publicar pre-release com --pre-release');
   assert.ok(workflow.includes('prerelease_flag'), 'workflow deve propagar flag de pre-release');
+});
+
+// ── Testes: run state por sessão ─────────────────────────────────────────────
+console.log('\n── run state por sessão ──');
+
+test('cancelIntegratedRun cancela apenas a execução da sessão informada', () => {
+  let killedA = false;
+  let killedB = false;
+  registerRunState('sess-a', { process: { killed: false, kill: () => { killedA = true; } } });
+  registerRunState('sess-b', { process: { killed: false, kill: () => { killedB = true; } } });
+  assert.strictEqual(cancelIntegratedRun('sess-a'), true);
+  assert.strictEqual(killedA, true);
+  assert.strictEqual(killedB, false);
+  unregisterRunState('sess-a');
+  unregisterRunState('sess-b');
+});
+
+test('unregisterRunState remove execução finalizada da sessão', () => {
+  registerRunState('sess-final', { process: { killed: false, kill: () => {} } });
+  assert.ok(activeRunIds().includes('sess-final'), 'sessão deve estar registrada');
+  unregisterRunState('sess-final');
+  assert.ok(!activeRunIds().includes('sess-final'), 'sessão finalizada não deve permanecer registrada');
 });
 
 // ── Teste: activate smoke ─────────────────────────────────────────────────────

@@ -20,8 +20,7 @@ let provider;
 let statusBar;
 let extContext;
 let outputChannel;
-let activeChild;
-let cancelRequested = false;
+const activeRuns = new Map();
 let modelCache = { at: 0, values: undefined };
 let agentsCache = { at: 0, values: undefined };
 let skillsCache = { at: 0, values: undefined };
@@ -228,63 +227,88 @@ function openTerminal(text) {
   terminal.show(true);
   terminal.sendText(terminalCommand(text));
 }
-function cancelIntegratedRun() {
-  cancelRequested = true;
-  if (!activeChild || activeChild.killed) return false;
+function normalizeSessionId(sessionId) {
+  return sessionId || '__default__';
+}
+function registerRunState(sessionId, state) {
+  const id = normalizeSessionId(sessionId);
+  activeRuns.set(id, Object.assign({ sessionId: id, cancelRequested: false, startedAt: Date.now() }, state || {}));
+  return activeRuns.get(id);
+}
+function getRunState(sessionId) {
+  return activeRuns.get(normalizeSessionId(sessionId));
+}
+function unregisterRunState(sessionId) {
+  activeRuns.delete(normalizeSessionId(sessionId));
+}
+function activeRunIds() {
+  return Array.from(activeRuns.keys());
+}
+function cancelIntegratedRun(sessionId) {
+  const run = getRunState(sessionId);
+  if (!run) return false;
+  run.cancelRequested = true;
+  const child = run.process;
+  if (!child || child.killed) return false;
   try {
-    activeChild.kill();
+    child.kill();
     return true;
   } catch (err) {
     log(`cancelIntegratedRun erro: ${err && err.message ? err.message : String(err)}`);
     return false;
   }
 }
-function runIntegrated(text) {
+function runIntegrated(text, options) {
   return new Promise((resolve) => {
-    cancelRequested = false;
+    const sessionId = normalizeSessionId(options && options.sessionId);
     const args = [...baseArgs(), '-p', '--', fullPrompt(text)];
-    log(`runIntegrated: ${devinPath()} ${args.slice(0, -1).join(' ')} -- [prompt ${fullPrompt(text).length} chars]`);
+    log(`runIntegrated: session=${sessionId} ${devinPath()} ${args.slice(0, -1).join(' ')} -- [prompt ${fullPrompt(text).length} chars]`);
     log(`  cwd: ${defaultCwd()}`);
     let settled = false;
     function done(value) {
       if (settled) return;
       settled = true;
-      activeChild = undefined;
+      unregisterRunState(sessionId);
       resolve(value);
     }
     try {
-      activeChild = cp.execFile(devinPath(), args, {
+      const child = cp.execFile(devinPath(), args, {
         cwd: defaultCwd(),
         timeout: Number(cfg().get('timeoutChatMs') || 300000),
         maxBuffer: 1024 * 1024 * 16,
         windowsHide: true
       }, (err, stdout, stderr) => {
-        if (cancelRequested) { done('Execucao cancelada pelo usuario.'); return; }
+        const run = getRunState(sessionId);
+        if (run && run.cancelRequested) { done('Execucao cancelada pelo usuario.'); return; }
         if (err) log(`runIntegrated erro: code=${err.code} signal=${err.signal} killed=${err.killed} msg=${err.message}`);
         if (stderr && stderr.trim()) log(`runIntegrated stderr: ${stderr.slice(0, 500)}`);
         if (stdout && stdout.trim()) log(`runIntegrated stdout: ${stdout.slice(0, 200)}...`);
         if (err && process.platform === 'win32') {
-          runIntegratedViaBash(text, err).then(done);
+          runIntegratedViaBash(text, err, { sessionId }).then(done);
           return;
         }
         done(friendlyCliOutput(stdout, stderr, err));
       });
-      activeChild.on('error', (err) => {
+      registerRunState(sessionId, { process: child, mode: 'integrated' });
+      child.on('error', (err) => {
         log(`runIntegrated child error: ${err.message}`);
-        if (cancelRequested) { done('Execucao cancelada pelo usuario.'); return; }
-        if (process.platform === 'win32') runIntegratedViaBash(text, err).then(done);
+        const run = getRunState(sessionId);
+        if (run && run.cancelRequested) { done('Execucao cancelada pelo usuario.'); return; }
+        if (process.platform === 'win32') runIntegratedViaBash(text, err, { sessionId }).then(done);
         else done(`Falha ao iniciar Devin CLI: ${err.message}\n\nValide o caminho em devinCliChat.caminhoDevin e execute "Devin Cli Chat: Verificar Devin CLI".`);
       });
     } catch (err) {
       log(`runIntegrated catch: ${err.message}`);
-      if (cancelRequested) { done('Execucao cancelada pelo usuario.'); return; }
-      if (process.platform === 'win32') runIntegratedViaBash(text, err).then(done);
+      const run = getRunState(sessionId);
+      if (run && run.cancelRequested) { done('Execucao cancelada pelo usuario.'); return; }
+      if (process.platform === 'win32') runIntegratedViaBash(text, err, { sessionId }).then(done);
       else done(`Falha ao iniciar Devin CLI: ${err.message}\n\nValide o caminho em devinCliChat.caminhoDevin e execute "Devin Cli Chat: Verificar Devin CLI".`);
     }
   });
 }
-function runIntegratedViaBash(text, firstError) {
+function runIntegratedViaBash(text, firstError, options) {
   return new Promise((resolve) => {
+    const sessionId = normalizeSessionId(options && options.sessionId);
     const bash = findGitBash();
     if (!bash) {
       resolve(`Falha ao executar Devin CLI: ${firstError.message}\n\nGit Bash nao foi encontrado. Configure devinCliChat.gitBashPath ou ajuste devinCliChat.caminhoDevin.`);
@@ -292,17 +316,19 @@ function runIntegratedViaBash(text, firstError) {
     }
     const args = baseArgs().map(shellQuote).join(' ');
     const command = `${shellQuote(devinPath())} ${args} -p -- ${shellQuote(fullPrompt(text))}`;
-    activeChild = cp.exec(command, {
+    const child = cp.exec(command, {
       cwd: defaultCwd(),
       shell: bash,
       timeout: Number(cfg().get('timeoutChatMs') || 300000),
       maxBuffer: 1024 * 1024 * 16
     }, (err, stdout, stderr) => {
-      activeChild = undefined;
-      if (cancelRequested) { resolve('Execucao cancelada pelo usuario.'); return; }
+      const run = getRunState(sessionId);
+      unregisterRunState(sessionId);
+      if (run && run.cancelRequested) { resolve('Execucao cancelada pelo usuario.'); return; }
       const output = friendlyCliOutput(stdout, stderr, err);
       resolve(output.replace('Falha ao executar Devin CLI:', 'Falha ao executar Devin CLI via Git Bash:'));
     });
+    registerRunState(sessionId, { process: child, mode: 'bash' });
   });
 }
 
@@ -640,7 +666,7 @@ class ChatViewProvider {
           return;
         }
         if (type === 'cancelRun') {
-          const ok = cancelIntegratedRun();
+          const ok = cancelIntegratedRun(this.session && this.session.id);
           this.post({ type: 'action', ok, text: ok ? 'Cancelamento solicitado.' : 'Nenhuma execucao integrada ativa para cancelar.' });
           return;
         }
@@ -1093,7 +1119,7 @@ class ChatViewProvider {
         this.session.messages.push({ role: 'assistant', text: reply, ts: Date.now() });
         return;
       }
-      const answer = await runIntegrated(prompt);
+      const answer = await runIntegrated(prompt, { sessionId: this.session.id });
       log(`send: resposta recebida (${answer ? answer.length : 0} chars)`);
       const outTokens = estimateTokens(answer);
       this.session.tokensOut = (this.session.tokensOut || 0) + outTokens;
@@ -1957,11 +1983,11 @@ async function activate(context) {
 }
 
 function deactivate() {
-  cancelIntegratedRun();
+  for (const id of activeRunIds()) cancelIntegratedRun(id);
 }
 
 module.exports = {
   activate,
   deactivate,
-  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe }
+  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds }
 };

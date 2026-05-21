@@ -140,6 +140,10 @@ const {
   registerRunState,
   unregisterRunState,
   activeRunIds,
+  createNonce,
+  validateWebviewMessage,
+  expandSlashCommand,
+  exportSessionMarkdown,
 } = ext._internal;
 
 // ── Mini runner de testes ─────────────────────────────────────────────────────
@@ -617,6 +621,55 @@ test('unregisterRunState remove execução finalizada da sessão', () => {
   assert.ok(activeRunIds().includes('sess-final'), 'sessão deve estar registrada');
   unregisterRunState('sess-final');
   assert.ok(!activeRunIds().includes('sess-final'), 'sessão finalizada não deve permanecer registrada');
+});
+
+// ── Testes: webview hardening ────────────────────────────────────────────────
+console.log('\n── webview hardening ──');
+
+test('createNonce gera nonce criptografico sem timestamp previsivel', () => {
+  const nonce = createNonce();
+  assert.ok(/^[A-Za-z0-9+/=]{20,}$/.test(nonce), 'nonce deve parecer base64 forte: ' + nonce);
+  assert.notStrictEqual(nonce, Date.now().toString(36), 'nonce não deve ser Date.now()');
+  assert.notStrictEqual(createNonce(), nonce, 'nonces consecutivos devem diferir');
+});
+
+test('validateWebviewMessage rejeita payload malformado', () => {
+  assert.strictEqual(validateWebviewMessage(null), null);
+  assert.strictEqual(validateWebviewMessage({ type: 'send', text: { bad: true } }), null);
+  assert.strictEqual(validateWebviewMessage({ type: 'loadSession', id: '../x' }), null);
+  assert.strictEqual(validateWebviewMessage({ type: 'unknownAction' }), null);
+});
+
+test('validateWebviewMessage normaliza payload valido', () => {
+  const msg = validateWebviewMessage({ type: 'send', text: 'ola', displayText: 'ola', echo: false, hasExplicitContext: true });
+  assert.deepStrictEqual(msg, { type: 'send', text: 'ola', displayText: 'ola', echo: false, hasExplicitContext: true });
+});
+
+// ── Testes: slash commands e export ──────────────────────────────────────────
+console.log('\n── slash commands e export ──');
+
+test('expandSlashCommand transforma comandos produtivos em prompts estruturados', () => {
+  assert.ok(expandSlashCommand('/review').text.includes('Revise o git diff atual'));
+  assert.ok(expandSlashCommand('/tests fluxo de login').text.includes('testes'));
+  assert.ok(expandSlashCommand('texto normal') === null);
+});
+
+test('exportSessionMarkdown gera markdown com metadados e mensagens', () => {
+  const md = exportSessionMarkdown({
+    title: 'Sessao teste',
+    workspace: 'demo',
+    model: 'sonnet',
+    agent: 'auto',
+    messages: [
+      { role: 'user', text: 'pergunta' },
+      { role: 'assistant', text: 'resposta' },
+    ],
+  });
+  assert.ok(md.includes('# Sessao teste'));
+  assert.ok(md.includes('Workspace: demo'));
+  assert.ok(md.includes('## User'));
+  assert.ok(md.includes('pergunta'));
+  assert.ok(md.includes('## Assistant'));
 });
 
 // ── Teste: activate smoke ─────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 	"name": "devin-cli-chat",
 	"displayName": "Devin Cli Chat",
 	"description": "Tela propria de chat para Devin CLI no VS Code, em portugues brasileiro, com contexto compacto, aliases reais do CLI e anexos resilientes.",
-	"version": "1.3.0",
+	"version": "1.9.0",
 	"publisher": "luiz-alberto-abarca-ferrarezi",
 	"author": {
 		"name": "Luiz Alberto Abarca Ferrarezi"
@@ -81,6 +81,12 @@
 				"icon": "$(history)"
 			},
 			{
+				"command": "devinCliChat.exportarSessaoAtual",
+				"title": "Devin Cli Chat: Exportar sessao atual em Markdown",
+				"category": "Devin Cli Chat",
+				"icon": "$(export)"
+			},
+			{
 				"command": "devinCliChat.novaSessao",
 				"title": "Devin Cli Chat: Nova sessão Devin no workspace",
 				"category": "Devin Cli Chat",
@@ -146,6 +152,9 @@
 				},
 				{
 					"command": "devinCliChat.abrirHistorico"
+				},
+				{
+					"command": "devinCliChat.exportarSessaoAtual"
 				},
 				{
 					"command": "devinCliChat.novaSessao"

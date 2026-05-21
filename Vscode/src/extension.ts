@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const cp = require('child_process');
+const crypto = require('crypto');
 
 const EXT = 'devinCliChat';
 const VALID_MODELS = ['auto', 'sonnet', 'opus', 'swe', 'gpt'];
@@ -69,6 +70,101 @@ function exists(filePath) {
 }
 function htmlEscape(value) {
   return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+function createNonce() {
+  return crypto.randomBytes(18).toString('base64');
+}
+function safeString(value, max) {
+  if (typeof value !== 'string') return undefined;
+  const limit = max || 20000;
+  return value.length > limit ? value.slice(0, limit) : value;
+}
+function safeBoolean(value) {
+  return typeof value === 'boolean' ? value : undefined;
+}
+function isSafeOpaqueId(value) {
+  return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,159}$/.test(value);
+}
+function validateWebviewMessage(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const type = safeString(raw.type, 40);
+  const simple = new Set(['ready', 'cancelRun', 'verifyCli', 'requestSelection', 'attachMenu', 'attachFiles', 'pickWorkspaceFiles', 'manualModel', 'refreshModels', 'review', 'selection', 'insertSelection', 'newChat', 'getHistory', 'clearHistory']);
+  if (simple.has(type)) return { type };
+  if (type === 'clientError') return { type, text: safeString(raw.text, 2000) || '' };
+  if (type === 'send') {
+    const text = safeString(raw.text, 200000);
+    if (text === undefined) return null;
+    const out = { type, text };
+    const displayText = safeString(raw.displayText, 200000);
+    const echo = safeBoolean(raw.echo);
+    const hasExplicitContext = safeBoolean(raw.hasExplicitContext);
+    if (displayText !== undefined) out.displayText = displayText;
+    if (echo !== undefined) out.echo = echo;
+    if (hasExplicitContext !== undefined) out.hasExplicitContext = hasExplicitContext;
+    return out;
+  }
+  if (type === 'terminal') {
+    const text = safeString(raw.text, 200000);
+    return text === undefined ? null : { type, text };
+  }
+  if (type === 'setModel' || type === 'setMode' || type === 'setAgent' || type === 'toggleSkill') {
+    const value = safeString(raw.value, 200);
+    return value === undefined ? null : { type, value };
+  }
+  if (type === 'listWorkspace' || type === 'attachFolder' || type === 'attachWorkspacePath') {
+    const pathValue = safeString(raw.path || '', 2000);
+    return pathValue === undefined ? null : { type, path: pathValue };
+  }
+  if (type === 'loadSession' || type === 'deleteSession' || type === 'exportSession') {
+    return isSafeOpaqueId(raw.id) ? { type, id: raw.id } : null;
+  }
+  return null;
+}
+function expandSlashCommand(input) {
+  const raw = String(input || '').trim();
+  if (!raw.startsWith('/')) return null;
+  const parts = raw.slice(1).split(/\s+/);
+  const command = (parts.shift() || '').toLowerCase();
+  const rest = raw.slice(command.length + 2).trim();
+  const topic = rest || 'o contexto atual';
+  const commands = {
+    review: 'Revise o git diff atual com foco em bugs, seguranca, testes, impacto produtivo e rollback.',
+    tests: `Proponha e implemente testes para ${topic}. Priorize cobertura de comportamento, regressao e caminhos de erro.`,
+    plan: `Crie um plano tecnico objetivo para ${topic}. Agrupe por impacto, risco e ordem de execucao.`,
+    explain: `Explique ${topic} com foco em arquitetura, fluxo de dados e pontos de manutencao.`,
+    security: `Revise ${topic} com foco em riscos de seguranca, entrada nao confiavel, execucao de comandos e exposicao de dados.`,
+    docs: `Gere documentacao pratica para ${topic}, incluindo objetivo, uso, limites e exemplos.`,
+    'commit-msg': 'Gere uma mensagem de commit convencional para as mudancas atuais, com escopo claro e resumo curto.'
+  };
+  const text = commands[command];
+  if (!text) return null;
+  return { command, text, displayText: raw };
+}
+function markdownEscapeLine(value) {
+  return String(value == null ? '' : value).replace(/\r?\n/g, ' ').trim();
+}
+function exportSessionMarkdown(session) {
+  const s = session || {};
+  const lines = [];
+  lines.push('# ' + (markdownEscapeLine(s.title) || 'Sessao Devin'));
+  lines.push('');
+  lines.push('- Workspace: ' + (markdownEscapeLine(s.workspace) || workspaceName()));
+  lines.push('- Modelo: ' + (markdownEscapeLine(s.model) || 'auto'));
+  lines.push('- Agente: ' + (markdownEscapeLine(s.agent) || 'auto'));
+  lines.push('- Modo: ' + (markdownEscapeLine(s.mode) || 'resposta-integrada'));
+  if (s.createdAt) lines.push('- Criada em: ' + new Date(s.createdAt).toISOString());
+  if (s.updatedAt) lines.push('- Atualizada em: ' + new Date(s.updatedAt).toISOString());
+  lines.push('');
+  const messages = Array.isArray(s.messages) ? s.messages : [];
+  for (const msg of messages) {
+    const role = String(msg && msg.role || 'message').toLowerCase();
+    lines.push('## ' + role.charAt(0).toUpperCase() + role.slice(1));
+    if (msg && msg.ts) lines.push('_' + new Date(msg.ts).toISOString() + '_');
+    lines.push('');
+    lines.push(String(msg && msg.text || '').trim());
+    lines.push('');
+  }
+  return lines.join('\n').trim() + '\n';
 }
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
@@ -655,9 +751,14 @@ class ChatViewProvider {
     view.webview.html = this.html(view.webview);
     log('WebView resolvida e HTML injetado.');
 
-    view.webview.onDidReceiveMessage(async (message) => {
+    view.webview.onDidReceiveMessage(async (rawMessage) => {
       try {
-        const type = message && message.type;
+        const message = validateWebviewMessage(rawMessage);
+        if (!message) {
+          log('Mensagem webview rejeitada por validacao.');
+          return;
+        }
+        const type = message.type;
         log(`Mensagem recebida do webview: type=${type}`);
         if (type === 'ready') { this.refreshMeta(); this.replaySession(); this.pushCurrentSelection(); return; }
         if (type === 'clientError') {
@@ -720,6 +821,7 @@ class ChatViewProvider {
         if (type === 'insertSelection') { this.post({ type: 'insertPrompt', text: 'Analise o contexto do editor atual.\n\n' + activeContext() }); return; }
         if (type === 'newChat') { await this.persistSession(); this.session = this.newSession(); this.post({ type: 'clearThread' }); this.refreshMeta(); return; }
         if (type === 'getHistory') { await this.openHistory(); return; }
+        if (type === 'exportSession') { await this.exportSession(message.id); return; }
         if (type === 'loadSession') {
           await this.persistSession();
           const all = loadHistory();
@@ -772,6 +874,23 @@ class ChatViewProvider {
     const sessions = loadHistory().filter(s => s && s.messages && s.messages.length);
     this.post({ type: 'openHistory', sessions });
     this.refreshMeta();
+  }
+
+  async exportSession(sessionId) {
+    await this.persistSession();
+    const all = loadHistory();
+    const found = sessionId ? all.find(s => s.id === sessionId) : null;
+    const target = found || this.session;
+    if (!target || !target.messages || !target.messages.length) {
+      const text = 'Nao ha conversa com mensagens para exportar.';
+      this.post({ type: 'action', ok: false, text });
+      vscode.window.showInformationMessage(text);
+      return;
+    }
+    await vscode.env.clipboard.writeText(exportSessionMarkdown(target));
+    const text = 'Conversa exportada em Markdown para a area de transferencia.';
+    this.post({ type: 'action', ok: true, text });
+    vscode.window.showInformationMessage(text);
   }
 
   verifyCli() {
@@ -1082,6 +1201,14 @@ class ChatViewProvider {
     let prompt = String(text || '').trim();
     if (!prompt) return;
     let displayPrompt = String(options && options.displayText ? options.displayText : prompt).trim();
+    const slash = expandSlashCommand(prompt);
+    if (slash) {
+      prompt = slash.text;
+      if (slash.command === 'review') {
+        prompt = prompt + '\n\n```diff\n' + gitDiff() + '\n```';
+      }
+      displayPrompt = slash.displayText || displayPrompt;
+    }
 
     let autoCtxLabel = null;
     if (!options || !options.hasExplicitContext) {
@@ -1141,7 +1268,7 @@ class ChatViewProvider {
 
 
   html(webview) {
-    const nonce = Date.now().toString(36);
+    const nonce = createNonce();
     const ICONS = {
       history: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.4 1.6"/></svg>',
       plus: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>',
@@ -1555,13 +1682,15 @@ function renderHistory(sessions){
     m.appendChild(info);
     var actions = document.createElement('div'); actions.className = 'actions';
     var load = document.createElement('button'); load.type = 'button'; load.textContent = 'Carregar';
+    var exp = document.createElement('button'); exp.type = 'button'; exp.textContent = 'Exportar';
     var del = document.createElement('button'); del.type = 'button'; del.textContent = 'Excluir';
     load.addEventListener('click', function(e){ e.stopPropagation(); post({ type: 'loadSession', id: s.id }); byId('historyPanel').classList.remove('open'); });
+    exp.addEventListener('click', function(e){ e.stopPropagation(); post({ type: 'exportSession', id: s.id }); });
     del.addEventListener('click', function(e){
       e.stopPropagation();
       if(confirm('Excluir esta conversa do historico?')) post({ type: 'deleteSession', id: s.id });
     });
-    actions.appendChild(load); actions.appendChild(del);
+    actions.appendChild(load); actions.appendChild(exp); actions.appendChild(del);
     div.appendChild(t); div.appendChild(m); div.appendChild(actions);
     div.addEventListener('dblclick', function(){ post({ type: 'loadSession', id: s.id }); byId('historyPanel').classList.remove('open'); });
     list.appendChild(div);
@@ -1912,6 +2041,10 @@ async function activate(context) {
     await vscode.commands.executeCommand('workbench.view.extension.devinCliChat');
     setTimeout(() => { if (provider) provider.openHistory(); }, 100);
   }));
+  context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.exportarSessaoAtual', async () => {
+    await vscode.commands.executeCommand('workbench.view.extension.devinCliChat');
+    if (provider) await provider.exportSession();
+  }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.novaSessao', () => openTerminal('')));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.revisarDiff', async () => {
     await vscode.commands.executeCommand('workbench.view.extension.devinCliChat');
@@ -1989,5 +2122,5 @@ function deactivate() {
 module.exports = {
   activate,
   deactivate,
-  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds }
+  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown }
 };

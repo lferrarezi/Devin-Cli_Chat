@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.0
+
+- Pre-release acumulada com hardening do webview: nonce criptografico por renderizacao e validacao centralizada de mensagens recebidas do painel.
+- Adiciona slash commands produtivos (`/review`, `/tests`, `/plan`, `/explain`, `/security`, `/docs`, `/commit-msg`) com expansao segura no backend.
+- Adiciona exportacao de conversas em Markdown pela Command Palette e pelo historico.
+- Amplia testes unitarios para 66 casos cobrindo nonce, validacao de mensagens, slash commands e exportacao.
+
 ## 1.0.1
 
 - Reescreve o README para uso no GitHub e no VS Code Marketplace.

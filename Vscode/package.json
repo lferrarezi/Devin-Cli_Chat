@@ -2,7 +2,7 @@
 	"name": "devin-cli-chat",
 	"displayName": "Devin Cli Chat",
 	"description": "Tela propria de chat para Devin CLI no VS Code, em portugues brasileiro, com contexto compacto, aliases reais do CLI e anexos resilientes.",
-	"version": "1.9.2",
+	"version": "1.9.3",
 	"publisher": "luiz-alberto-abarca-ferrarezi",
 	"author": {
 		"name": "Luiz Alberto Abarca Ferrarezi"
@@ -135,6 +135,11 @@
 				"category": "Devin Cli Chat"
 			},
 			{
+				"command": "devinCliChat.selecionarTools",
+				"title": "Devin Cli Chat: Selecionar tools",
+				"category": "Devin Cli Chat"
+			},
+			{
 				"command": "devinCliChat.selecionarModo",
 				"title": "Devin Cli Chat: Selecionar modo de execucao",
 				"category": "Devin Cli Chat"
@@ -179,6 +184,9 @@
 				},
 				{
 					"command": "devinCliChat.selecionarSkills"
+				},
+				{
+					"command": "devinCliChat.selecionarTools"
 				},
 				{
 					"command": "devinCliChat.selecionarModo"
@@ -249,6 +257,24 @@
 					"type": "string",
 					"default": "~/.config/devin/agents",
 					"description": "Diretório global de agentes."
+				},
+				"devinCliChat.toolsSelecionadas": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [],
+					"description": "Tools atualmente selecionadas para serem incluidas no prompt enviado ao Devin CLI."
+				},
+				"devinCliChat.diretorioToolsWorkspace": {
+					"type": "string",
+					"default": ".devin/tools",
+					"description": "Diretorio de tools no workspace (cada subpasta deve conter um TOOL.md)."
+				},
+				"devinCliChat.diretorioToolsGlobal": {
+					"type": "string",
+					"default": "~/.config/devin/tools",
+					"description": "Diretorio global de tools do usuario."
 				},
 				"devinCliChat.modoExecucaoChat": {
 					"type": "string",

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.3
+
+- Adiciona importacao de arquivo Markdown como agente, copiando para `.devin/agents/<nome>/AGENT.md`.
+- Adiciona suporte a tools selecionaveis e importaveis, usando `.devin/tools/<nome>/TOOL.md`.
+- Adiciona seletor de tools no painel e na Command Palette.
+- Inclui tools selecionadas no prompt enviado ao Devin CLI.
+
 ## 1.9.2
 
 - Corrige erro ao enviar anexos com bytes nulos, removendo `\0` do prompt antes de chamar o Devin CLI.

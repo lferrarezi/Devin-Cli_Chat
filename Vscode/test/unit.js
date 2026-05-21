@@ -34,10 +34,13 @@ const mockConfigValues = {
   usarAcpParaDescobertaModelos: false,
   tentarComandosLegadosDescobertaModelos: false,
   skillsSelecionadas: [],
+  toolsSelecionadas: [],
   diretorioAgentesWorkspace: '.devin/agents',
   diretorioAgentesGlobal: '~/.config/devin/agents',
   diretorioSkillsWorkspace: '.devin/skills',
   diretorioSkillsGlobal: '~/.config/devin/skills',
+  diretorioToolsWorkspace: '.devin/tools',
+  diretorioToolsGlobal: '~/.config/devin/tools',
   caminhoDevin: 'devin',
   nomeTerminal: 'Devin Cli Chat',
   usarGitBashNoWindows: false,
@@ -137,8 +140,11 @@ const {
   modelsForUi,
   scanAgents,
   scanSkills,
+  scanTools,
   skillNameFromMarkdownFile,
   importSkillMarkdownFile,
+  importAgentMarkdownFile,
+  importToolMarkdownFile,
   cancelIntegratedRun,
   automaticEditorContext,
   resolveWorkspacePathSafe,
@@ -341,6 +347,14 @@ test('skills selecionadas são mencionadas no prompt', () => {
   mockConfigValues.skillsSelecionadas = [];
 });
 
+test('tools selecionadas são mencionadas no prompt', () => {
+  mockConfigValues.toolsSelecionadas = ['tool-a', 'tool-b'];
+  const prompt = fullPrompt('teste');
+  assert.ok(prompt.includes('tool-a'), 'prompt deve mencionar tool-a');
+  assert.ok(prompt.includes('TOOL.md'), 'prompt deve orientar TOOL.md');
+  mockConfigValues.toolsSelecionadas = [];
+});
+
 test('fullPrompt remove bytes nulos antes de chamar a CLI', () => {
   const prompt = fullPrompt('arquivo binario\u0000com byte nulo');
   assert.ok(!prompt.includes('\u0000'), 'prompt final nao pode conter byte nulo');
@@ -406,6 +420,34 @@ test('importSkillMarkdownFile copia .md para diretorio padrao como SKILL.md', ()
   assert.ok(scanSkills().includes('minha-skill'), 'scanSkills deve encontrar a skill importada');
   mockConfigValues.diretorioSkillsWorkspace = '.devin/skills';
   mockConfigValues.diretorioSkillsGlobal = '~/.config/devin/skills';
+});
+
+test('importAgentMarkdownFile copia .md para diretorio padrao como AGENT.md', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'devin-import-agent-'));
+  const source = path.join(root, 'Meu Agente.md');
+  const agentsDir = path.join(root, 'agents');
+  fs.writeFileSync(source, '# Meu Agente', 'utf8');
+  mockConfigValues.diretorioAgentesWorkspace = agentsDir;
+  const imported = importAgentMarkdownFile(source);
+  assert.strictEqual(imported.name, 'meu-agente');
+  assert.ok(fs.existsSync(path.join(agentsDir, 'meu-agente', 'AGENT.md')), 'AGENT.md deve ser criado');
+  assert.ok(scanAgents().includes('meu-agente'), 'scanAgents deve encontrar o agente importado');
+  mockConfigValues.diretorioAgentesWorkspace = '.devin/agents';
+});
+
+test('importToolMarkdownFile copia .md para diretorio padrao como TOOL.md', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'devin-import-tool-'));
+  const source = path.join(root, 'Minha Tool.md');
+  const toolsDir = path.join(root, 'tools');
+  fs.writeFileSync(source, '# Minha Tool', 'utf8');
+  mockConfigValues.diretorioToolsWorkspace = toolsDir;
+  mockConfigValues.diretorioToolsGlobal = path.join(root, 'global-tools');
+  const imported = importToolMarkdownFile(source);
+  assert.strictEqual(imported.name, 'minha-tool');
+  assert.ok(fs.existsSync(path.join(toolsDir, 'minha-tool', 'TOOL.md')), 'TOOL.md deve ser criado');
+  assert.ok(scanTools().includes('minha-tool'), 'scanTools deve encontrar a tool importada');
+  mockConfigValues.diretorioToolsWorkspace = '.devin/tools';
+  mockConfigValues.diretorioToolsGlobal = '~/.config/devin/tools';
 });
 
 // ── Teste: sintaxe do script da webview (via extension.ts) ───────────────────

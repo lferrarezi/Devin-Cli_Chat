@@ -26,6 +26,7 @@ const activeRuns = new Map();
 let modelCache = { at: 0, values: undefined };
 let agentsCache = { at: 0, values: undefined };
 let skillsCache = { at: 0, values: undefined };
+let toolsCache = { at: 0, values: undefined };
 
 function log(msg) {
   const ts = new Date().toISOString();
@@ -38,6 +39,7 @@ function invalidateMetaCache() {
   modelCache = { at: 0, values: undefined };
   agentsCache = { at: 0, values: undefined };
   skillsCache = { at: 0, values: undefined };
+  toolsCache = { at: 0, values: undefined };
 }
 function isSafeModelId(value) {
   return /^[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}$/.test(String(value || '').trim());
@@ -89,7 +91,7 @@ function isSafeOpaqueId(value) {
 function validateWebviewMessage(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const type = safeString(raw.type, 40);
-  const simple = new Set(['ready', 'cancelRun', 'verifyCli', 'requestSelection', 'attachMenu', 'attachFiles', 'pickWorkspaceFiles', 'manualModel', 'refreshModels', 'review', 'selection', 'insertSelection', 'newChat', 'getHistory', 'clearHistory', 'importSkillFile']);
+  const simple = new Set(['ready', 'cancelRun', 'verifyCli', 'requestSelection', 'attachMenu', 'attachFiles', 'pickWorkspaceFiles', 'manualModel', 'refreshModels', 'review', 'selection', 'insertSelection', 'newChat', 'getHistory', 'clearHistory', 'importAgentFile', 'importSkillFile', 'importToolFile']);
   if (simple.has(type)) return { type };
   if (type === 'clientError') return { type, text: safeString(raw.text, 2000) || '' };
   if (type === 'send') {
@@ -111,7 +113,7 @@ function validateWebviewMessage(raw) {
   if (type === 'searchWorkspaceFiles') {
     return { type, query: safeString(raw.query || '', 200) || '' };
   }
-  if (type === 'setModel' || type === 'setMode' || type === 'setAgent' || type === 'toggleSkill') {
+  if (type === 'setModel' || type === 'setMode' || type === 'setAgent' || type === 'toggleSkill' || type === 'toggleTool') {
     const value = safeString(raw.value, 200);
     return value === undefined ? null : { type, value };
   }
@@ -216,6 +218,10 @@ function selectedSkills() {
   const list = cfg().get('skillsSelecionadas') || [];
   return Array.isArray(list) ? list.map(String).filter(Boolean) : [];
 }
+function selectedTools() {
+  const list = cfg().get('toolsSelecionadas') || [];
+  return Array.isArray(list) ? list.map(String).filter(Boolean) : [];
+}
 function devinPath() { return String(cfg().get('caminhoDevin') || 'devin'); }
 function defaultCwd() { return workspaceRoot() || os.homedir(); }
 
@@ -267,12 +273,14 @@ function fullPrompt(text) {
   const selectedModel = modelForCli() || configuredModel() || 'auto';
   const selectedAgent = currentAgent();
   const skills = selectedSkills();
+  const tools = selectedTools();
   const context = [
     `Workspace VS Code: ${workspaceName()}`,
     workspaceRoot() ? `Diretorio raiz: ${workspaceRoot()}` : 'Diretorio raiz: nao ha pasta aberta',
     `Modelo selecionado: ${selectedModel}`,
     `Agente selecionado: ${selectedAgent}`,
-    skills.length ? `Skills disponiveis: ${skills.join(', ')}` : ''
+    skills.length ? `Skills disponiveis: ${skills.join(', ')}` : '',
+    tools.length ? `Tools disponiveis: ${tools.join(', ')}` : ''
   ].filter(Boolean).join('\n');
   const agentHint = selectedAgent !== 'auto'
     ? `Use o perfil/subagente Devin chamado "${selectedAgent}" quando aplicavel. Se a CLI nao aceitar selecao direta de agente nesta chamada, trate este agente como persona operacional e siga as instrucoes do respectivo AGENT.md.`
@@ -280,7 +288,10 @@ function fullPrompt(text) {
   const skillsHint = skills.length
     ? `Invoque a skill via tool 'skill' quando aplicavel: ${skills.map(s => `"${s}"`).join(', ')}. Siga as instrucoes do respectivo SKILL.md.`
     : '';
-  return sanitizePromptText([prefix, context, agentHint, skillsHint, text].filter(Boolean).join('\n\n'));
+  const toolsHint = tools.length
+    ? `Use as tools selecionadas quando aplicavel: ${tools.map(s => `"${s}"`).join(', ')}. Siga as instrucoes do respectivo TOOL.md.`
+    : '';
+  return sanitizePromptText([prefix, context, agentHint, skillsHint, toolsHint, text].filter(Boolean).join('\n\n'));
 }
 function terminalCommand(text) {
   const executable = shellQuote(devinPath());
@@ -535,6 +546,27 @@ function scanAgents() {
   agentsCache = { at: now, values: result };
   return result;
 }
+function scanTools() {
+  const now = Date.now();
+  if (toolsCache.values && now - toolsCache.at < metadataCacheMs()) return toolsCache.values;
+  const dirs = [
+    resolveMaybe(cfg().get('diretorioToolsWorkspace') || '.devin/tools'),
+    resolveMaybe(cfg().get('diretorioToolsGlobal') || '~/.config/devin/tools')
+  ];
+  const out = [];
+  for (const dir of dirs) {
+    try {
+      if (!dir || !fs.existsSync(dir)) continue;
+      for (const name of fs.readdirSync(dir)) {
+        const toolFile = path.join(dir, name, 'TOOL.md');
+        if (fs.existsSync(toolFile)) out.push(name);
+      }
+    } catch (_) {}
+  }
+  const result = Array.from(new Set(out)).sort();
+  toolsCache = { at: now, values: result };
+  return result;
+}
 function scanSkills() {
   const now = Date.now();
   if (skillsCache.values && now - skillsCache.at < metadataCacheMs()) return skillsCache.values;
@@ -572,6 +604,12 @@ function skillNameFromMarkdownFile(filePath) {
 function defaultSkillsInstallDir() {
   return resolveMaybe(cfg().get('diretorioSkillsWorkspace') || '.devin/skills');
 }
+function defaultAgentsInstallDir() {
+  return resolveMaybe(cfg().get('diretorioAgentesWorkspace') || '.devin/agents');
+}
+function defaultToolsInstallDir() {
+  return resolveMaybe(cfg().get('diretorioToolsWorkspace') || '.devin/tools');
+}
 function uniqueSkillDir(root, name) {
   let candidate = path.join(root, name);
   let n = 2;
@@ -582,20 +620,28 @@ function uniqueSkillDir(root, name) {
   return candidate;
 }
 function importSkillMarkdownFile(filePath) {
+  return importMarkdownCatalogFile(filePath, defaultSkillsInstallDir(), 'SKILL.md');
+}
+function importAgentMarkdownFile(filePath) {
+  return importMarkdownCatalogFile(filePath, defaultAgentsInstallDir(), 'AGENT.md');
+}
+function importToolMarkdownFile(filePath) {
+  return importMarkdownCatalogFile(filePath, defaultToolsInstallDir(), 'TOOL.md');
+}
+function importMarkdownCatalogFile(filePath, root, targetFileName) {
   const source = String(filePath || '');
   if (!source || path.extname(source).toLowerCase() !== '.md') {
-    throw new Error('Selecione um arquivo .md para importar como skill.');
+    throw new Error('Selecione um arquivo .md para importar.');
   }
   if (!fs.existsSync(source) || !fs.statSync(source).isFile()) {
-    throw new Error('Arquivo de skill nao encontrado: ' + source);
+    throw new Error('Arquivo markdown nao encontrado: ' + source);
   }
-  const root = defaultSkillsInstallDir();
-  if (!root) throw new Error('Diretorio padrao de skills nao resolvido.');
+  if (!root) throw new Error('Diretorio padrao nao resolvido.');
   const name = skillNameFromMarkdownFile(source);
   const targetDir = uniqueSkillDir(root, name);
   const finalName = path.basename(targetDir);
   fs.mkdirSync(targetDir, { recursive: true });
-  const target = path.join(targetDir, 'SKILL.md');
+  const target = path.join(targetDir, targetFileName);
   fs.copyFileSync(source, target);
   invalidateMetaCache();
   return { name: finalName, file: target, dir: targetDir };
@@ -753,27 +799,61 @@ async function pickSkills() {
   }
   await setConfig('skillsSelecionadas', Array.from(new Set(selected)));
 }
+async function pickTools() {
+  const available = scanTools();
+  const importLabel = '+ Importar arquivo .md como tool';
+  const current = new Set(selectedTools());
+  const items = [
+    { label: importLabel, description: 'Copia para o diretorio padrao de tools' },
+    ...available.map(s => ({ label: s, picked: current.has(s) }))
+  ];
+  const picked = await vscode.window.showQuickPick(items, {
+    canPickMany: true,
+    placeHolder: available.length ? 'Selecione tools disponiveis para o Devin' : 'Importe um .md ou selecione tools disponiveis'
+  });
+  if (!picked) return;
+  const selected = picked.filter(p => p.label !== importLabel).map(p => p.label);
+  if (picked.some(p => p.label === importLabel)) {
+    const imported = await importCatalogMarkdownFromDialog({ kind: 'tool', importer: importToolMarkdownFile, configKey: 'toolsSelecionadas', selectImported: false });
+    if (imported) selected.push(imported.name);
+  }
+  await setConfig('toolsSelecionadas', Array.from(new Set(selected)));
+}
 async function importSkillMarkdownFromDialog(options) {
+  return importCatalogMarkdownFromDialog({ kind: 'skill', importer: importSkillMarkdownFile, configKey: 'skillsSelecionadas', selectImported: !options || options.selectImported !== false });
+}
+async function importAgentMarkdownFromDialog(options) {
+  const imported = await importCatalogMarkdownFromDialog({ kind: 'agente', importer: importAgentMarkdownFile, configKey: 'agenteAtual', singleValue: true, selectImported: !options || options.selectImported !== false });
+  return imported;
+}
+async function importToolMarkdownFromDialog(options) {
+  return importCatalogMarkdownFromDialog({ kind: 'tool', importer: importToolMarkdownFile, configKey: 'toolsSelecionadas', selectImported: !options || options.selectImported !== false });
+}
+async function importCatalogMarkdownFromDialog(options) {
   const picked = await vscode.window.showOpenDialog({
     canSelectFiles: true,
     canSelectFolders: false,
     canSelectMany: false,
     filters: { Markdown: ['md'] },
-    title: 'Importar arquivo Markdown como skill Devin'
+    title: 'Importar arquivo Markdown como ' + options.kind + ' Devin'
   });
   if (!picked || !picked.length) return null;
   try {
-    const imported = importSkillMarkdownFile(picked[0].fsPath);
-    if (!options || options.selectImported !== false) {
-      const current = new Set(selectedSkills());
-      current.add(imported.name);
-      await setConfig('skillsSelecionadas', Array.from(current));
+    const imported = options.importer(picked[0].fsPath);
+    if (options.selectImported !== false) {
+      if (options.singleValue) {
+        await setConfig(options.configKey, imported.name);
+      } else {
+        const current = new Set(options.configKey === 'toolsSelecionadas' ? selectedTools() : selectedSkills());
+        current.add(imported.name);
+        await setConfig(options.configKey, Array.from(current));
+      }
     }
     if (provider) provider.refreshMeta();
-    vscode.window.showInformationMessage(`Skill "${imported.name}" importada para ${imported.file}.`);
+    vscode.window.showInformationMessage(`${options.kind} "${imported.name}" importado para ${imported.file}.`);
     return imported;
   } catch (err) {
-    vscode.window.showErrorMessage('Falha ao importar skill: ' + (err && err.message ? err.message : String(err)));
+    vscode.window.showErrorMessage('Falha ao importar ' + options.kind + ': ' + (err && err.message ? err.message : String(err)));
     return null;
   }
 }
@@ -827,6 +907,7 @@ class ChatViewProvider {
       agent: currentAgent(),
       mode: currentMode(),
       skills: selectedSkills(),
+      tools: selectedTools(),
       messages: []
     };
   }
@@ -893,9 +974,19 @@ class ChatViewProvider {
         }
         if (type === 'setMode') { await setConfig('modoExecucaoChat', message.value || 'resposta-integrada'); return; }
         if (type === 'setAgent') { await setConfig('agenteAtual', message.value || 'auto'); return; }
+        if (type === 'importAgentFile') {
+          const imported = await importAgentMarkdownFromDialog();
+          if (imported) this.post({ type: 'action', ok: true, text: 'Agente importado: ' + imported.name });
+          return;
+        }
         if (type === 'importSkillFile') {
           const imported = await importSkillMarkdownFromDialog();
           if (imported) this.post({ type: 'action', ok: true, text: 'Skill importada: ' + imported.name });
+          return;
+        }
+        if (type === 'importToolFile') {
+          const imported = await importToolMarkdownFromDialog();
+          if (imported) this.post({ type: 'action', ok: true, text: 'Tool importada: ' + imported.name });
           return;
         }
         if (type === 'toggleSkill') {
@@ -903,6 +994,13 @@ class ChatViewProvider {
           if (message.value && set.has(message.value)) set.delete(message.value);
           else if (message.value) set.add(message.value);
           await setConfig('skillsSelecionadas', Array.from(set));
+          return;
+        }
+        if (type === 'toggleTool') {
+          const set = new Set(selectedTools());
+          if (message.value && set.has(message.value)) set.delete(message.value);
+          else if (message.value) set.add(message.value);
+          await setConfig('toolsSelecionadas', Array.from(set));
           return;
         }
         if (type === 'manualModel') { await pickManualModel(); return; }
@@ -1296,6 +1394,7 @@ class ChatViewProvider {
       agent: currentAgent(),
       skills: [],
       selectedSkills: selectedSkills(),
+      selectedTools: selectedTools(),
       mode: currentMode(),
       workspace: workspaceName(),
       sessionId: this.session && this.session.id,
@@ -1310,6 +1409,7 @@ class ChatViewProvider {
     try { payload.models = modelsForUi(); } catch (_) { payload.models = FALLBACK_MODELS; }
     try { payload.agents = scanAgents(); } catch (_) { payload.agents = ['auto']; }
     try { payload.skills = scanSkills(); } catch (_) { payload.skills = []; }
+    try { payload.tools = scanTools(); } catch (_) { payload.tools = []; }
     try {
       payload.recentSessions = loadHistory().slice(0, 3).map(s => ({
         id: s.id,
@@ -1319,7 +1419,7 @@ class ChatViewProvider {
         model: s.model || 'auto'
       }));
     } catch (_) { payload.recentSessions = []; }
-    try { payload.modelStatus = `${payload.models.length} modelos | ${payload.skills.length} skills`; } catch (_) {}
+    try { payload.modelStatus = `${payload.models.length} modelos | ${payload.skills.length} skills | ${payload.tools.length} tools`; } catch (_) {}
     this.post(payload);
   }
 
@@ -1589,6 +1689,7 @@ body.narrow .modelLockBadge.show span{display:none}
       <button type="button" class="chipBtn" data-action="openAgentMenu" id="agentChip" title="Agente">${ICONS.bot}<span class="chipText" id="agentChipText">Agente</span><span class="caret">${ICONS.caret}</span></button>
       <button type="button" class="chipBtn" data-action="openModeMenu" id="modeChip" title="Modo">${ICONS.mode}<span class="chipText" id="modeChipText">Modo</span><span class="caret">${ICONS.caret}</span></button>
       <button type="button" class="chipBtn" data-action="openSkillsMenu" id="skillsBtn" title="Skills">${ICONS.sparkle}<span class="chipText">Skills <span id="skillsCount">0</span></span></button>
+      <button type="button" class="chipBtn" data-action="openToolsMenu" id="toolsBtn" title="Tools">${ICONS.terminal}<span class="chipText">Tools <span id="toolsCount">0</span></span></button>
       <span class="barSpacer"></span>
       <span class="busyDot"></span>
       <span class="tokenPie" id="tokenPie" title="Tokens"></span>
@@ -1604,7 +1705,7 @@ body.narrow .modelLockBadge.show span{display:none}
 var vscode = acquireVsCodeApi();
 var ICONS = ${JSON.stringify(ICONS)};
 var MODEL_TREE = ${JSON.stringify(MODEL_TREE)};
-var META = { skills: [], selectedSkills: [], modelLocked: false, hasMessages: false, model: 'auto', agent: 'auto', mode: 'resposta-integrada', agents: ['auto'], tokensTotal: 0, tokensIn: 0, tokensOut: 0, recentSessions: [] };
+var META = { skills: [], selectedSkills: [], tools: [], selectedTools: [], modelLocked: false, hasMessages: false, model: 'auto', agent: 'auto', mode: 'resposta-integrada', agents: ['auto'], tokensTotal: 0, tokensIn: 0, tokensOut: 0, recentSessions: [] };
 var busy = false;
 var pendingSelection = null;
 var attachedItems = [];
@@ -1917,8 +2018,22 @@ function openModelMenu(){
 function openAgentMenu(){
   closeAllMenus();
   var anchor = byId('agentChip');
-  var items = (META.agents || ['auto']).map(function(a){ return { label: a, value: a }; });
-  var menu = buildMenu(items, anchor, function(value){ post({ type: 'setAgent', value: value }); }, 1);
+  var menu = document.createElement('div'); menu.className = 'menu'; menu.dataset.level = 1;
+  var importBtn = document.createElement('button');
+  importBtn.type = 'button';
+  importBtn.className = 'menuAction';
+  importBtn.textContent = '+ Importar .md como agente';
+  importBtn.addEventListener('click', function(ev){ ev.stopPropagation(); post({ type: 'importAgentFile' }); closeAllMenus(); });
+  menu.appendChild(importBtn);
+  (META.agents || ['auto']).forEach(function(a){
+    var row = document.createElement('div'); row.className = 'item';
+    if(a === META.agent) row.classList.add('selected');
+    var span = document.createElement('span'); span.textContent = a;
+    row.appendChild(span);
+    row.addEventListener('click', function(ev){ ev.stopPropagation(); post({ type: 'setAgent', value: a }); closeAllMenus(); });
+    menu.appendChild(row);
+  });
+  document.body.appendChild(menu);
   positionMenuAnchor(menu, anchor);
   openMenu = 'agent';
 }
@@ -1964,6 +2079,37 @@ function openSkillsMenu(){
   document.body.appendChild(menu);
   positionMenuAnchor(menu, anchor);
   openMenu = 'skills';
+}
+
+function openToolsMenu(){
+  closeAllMenus();
+  var anchor = byId('toolsBtn');
+  var menu = document.createElement('div'); menu.className = 'menu'; menu.dataset.level = 1;
+  var head = document.createElement('div'); head.className = 'head';
+  var title = document.createElement('span'); title.textContent = 'Tools disponiveis';
+  var sp = document.createElement('span'); sp.className = 'barSpacer';
+  head.appendChild(title); head.appendChild(sp);
+  menu.appendChild(head);
+  var tools = META.tools || []; var sel = new Set(META.selectedTools || []);
+  if(!tools.length){ var e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Nenhuma tool em .devin/tools'; menu.appendChild(e); }
+  var importBtn = document.createElement('button');
+  importBtn.type = 'button';
+  importBtn.className = 'menuAction';
+  importBtn.textContent = '+ Importar .md como tool';
+  importBtn.addEventListener('click', function(ev){ ev.stopPropagation(); post({ type: 'importToolFile' }); closeAllMenus(); });
+  menu.appendChild(importBtn);
+  tools.forEach(function(name){
+    var lab = document.createElement('label'); lab.className = 'check';
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = sel.has(name);
+    cb.addEventListener('change', function(ev){ ev.stopPropagation(); post({ type: 'toggleTool', value: name }); if(cb.checked) sel.add(name); else sel.delete(name); });
+    var span = document.createElement('span'); span.textContent = name;
+    lab.appendChild(cb); lab.appendChild(span);
+    lab.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    menu.appendChild(lab);
+  });
+  document.body.appendChild(menu);
+  positionMenuAnchor(menu, anchor);
+  openMenu = 'tools';
 }
 
 var browserPath = '';
@@ -2138,6 +2284,7 @@ function action(name, element){
   if(name === 'starter') return sendPrompt(element.getAttribute('data-prompt') || '');
   if(name === 'toggleHistory'){ if(togglePanel('historyPanel')) post({ type: 'getHistory' }); return; }
   if(name === 'openSkillsMenu') return openSkillsMenu();
+  if(name === 'openToolsMenu') return openToolsMenu();
   if(name === 'clearHistory'){ post({ type: 'clearHistory' }); return; }
   if(name === 'openModelMenu') return openModelMenu();
   if(name === 'openAgentMenu') return openAgentMenu();
@@ -2174,6 +2321,7 @@ window.addEventListener('message', function(ev){
   var m = ev.data || {};
   if(m.type === 'meta'){
     META.skills = m.skills || []; META.selectedSkills = m.selectedSkills || [];
+    META.tools = m.tools || []; META.selectedTools = m.selectedTools || [];
     META.modelLocked = !!m.modelLocked; META.hasMessages = !!m.hasMessages;
     META.model = m.model || 'auto'; META.agent = m.agent || 'auto'; META.mode = m.mode || 'resposta-integrada';
     META.agents = m.agents || ['auto'];
@@ -2189,8 +2337,11 @@ window.addEventListener('message', function(ev){
     var modeText = byId('modeChipText'); if(modeText) modeText.textContent = META.mode === 'terminal' ? 'Terminal' : 'Integrado';
     var c = byId('skillsCount'); if(c) c.textContent = (META.selectedSkills || []).length;
     var sb = byId('skillsBtn'); if(sb) sb.classList.toggle('has', (META.selectedSkills || []).length > 0);
+    var tc = byId('toolsCount'); if(tc) tc.textContent = (META.selectedTools || []).length;
+    var tb = byId('toolsBtn'); if(tb) tb.classList.toggle('has', (META.selectedTools || []).length > 0);
 
     if(openMenu === 'skills'){ openSkillsMenu(); }
+    if(openMenu === 'tools'){ openToolsMenu(); }
     renderRecent();
     updateGate(); updateTokens();
   }
@@ -2280,10 +2431,14 @@ async function activate(context) {
     vscode.window.showInformationMessage(`Modelos atualizados (${modelsForUi().length} disponiveis).`);
   }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarAgente', async () => {
-    const pick = await vscode.window.showQuickPick(scanAgents(), { placeHolder: 'Selecione o agente Devin' });
-    if (pick) await setConfig('agenteAtual', pick);
+    const importLabel = '+ Importar arquivo .md como agente';
+    const pick = await vscode.window.showQuickPick([importLabel, ...scanAgents()], { placeHolder: 'Selecione o agente Devin' });
+    if (!pick) return;
+    if (pick === importLabel) { await importAgentMarkdownFromDialog(); return; }
+    await setConfig('agenteAtual', pick);
   }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarSkills', pickSkills));
+  context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarTools', pickTools));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.selecionarModo', async () => {
     const pick = await vscode.window.showQuickPick([
       { label: 'Integrado (resposta no chat)', value: 'resposta-integrada' },
@@ -2333,5 +2488,5 @@ function deactivate() {
 module.exports = {
   activate,
   deactivate,
-  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, skillNameFromMarkdownFile, importSkillMarkdownFile, loadHistory, saveHistory, sanitizeModel, sanitizePromptText, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown, shouldApplyFirstInstallRightSidebar, applyFirstInstallRightSidebar }
+  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, scanTools, skillNameFromMarkdownFile, importSkillMarkdownFile, importAgentMarkdownFile, importToolMarkdownFile, loadHistory, saveHistory, sanitizeModel, sanitizePromptText, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown, shouldApplyFirstInstallRightSidebar, applyFirstInstallRightSidebar }
 };

@@ -1,5 +1,9 @@
 **/.DS_Store
 **/*.vsix
+**/*.vsix.*
+devin-cli-chat-*
+*.tgz
+*.zip
 _old/**
 source/**
 VERSION_0.29_ANALISE.md

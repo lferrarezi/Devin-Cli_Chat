@@ -30,21 +30,28 @@ jobs:
       - name: Compile TypeScript
         run: npm run compile
 
+      - name: Resolve package version
+        id: package
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Package VSIX
-        run: npx vsce package --no-dependencies
+        run: npx vsce package --out "devin-cli-chat-${{ steps.package.outputs.version }}.vsix"
 
       - name: Validate VSIX integrity
         run: |
-          VSIX_FILE=$(ls *.vsix | head -1)
+          VSIX_FILE="devin-cli-chat-${{ steps.package.outputs.version }}.vsix"
           echo "Validating $VSIX_FILE"
           unzip -t "$VSIX_FILE"
+          npm run validate:vsix -- "$VSIX_FILE"
           echo "VSIX is valid"
 
       - name: Publish to VS Code Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
-          VSIX_FILE=$(ls *.vsix | head -1)
+          VSIX_FILE="devin-cli-chat-${{ steps.package.outputs.version }}.vsix"
           npx vsce publish --packagePath "$VSIX_FILE" --pat "$VSCE_PAT"
 
       - name: Upload VSIX to GitHub Release

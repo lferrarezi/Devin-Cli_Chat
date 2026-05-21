@@ -2,7 +2,7 @@
 	"name": "devin-cli-chat",
 	"displayName": "Devin Cli Chat",
 	"description": "Tela propria de chat para Devin CLI no VS Code, em portugues brasileiro, com contexto compacto, aliases reais do CLI e anexos resilientes.",
-	"version": "1.0.7",
+	"version": "1.0.8",
 	"publisher": "luiz-alberto-abarca-ferrarezi",
 	"author": {
 		"name": "Luiz Alberto Abarca Ferrarezi"
@@ -10,7 +10,7 @@
 	"license": "Apache-2.0",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/lferrarezi/Devin-Cli_Chat"
+		"url": "https://github.com/lferrarezi/Devin-Cli-Chat"
 	},
 	"scripts": {
 		"compile": "tsc -p tsconfig.json --noEmit",

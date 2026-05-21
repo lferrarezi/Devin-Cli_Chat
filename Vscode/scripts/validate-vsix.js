@@ -50,13 +50,14 @@ function warn(msg) { console.log('  WARN ' + msg); warned++; }
 // ── Helper: listar arquivos no VSIX ───────────────────────────────────────────
 let listing = '';
 try {
-  listing = cp.execFileSync('unzip', ['-l', vsixPath], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  listing = cp.execFileSync('unzip', ['-Z1', vsixPath], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
 } catch (e) {
   fail('Falha ao listar VSIX com unzip: ' + e.message);
   process.exit(1);
 }
 const vsixFiles = listing.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-const hasPath = (p) => vsixFiles.some(l => l.includes(p));
+const hasPath = (p) => vsixFiles.some(f => f.includes(p));
+const hasFile = (p) => vsixFiles.includes(p);
 
 // ── Helper: extrair arquivo do VSIX ───────────────────────────────────────────
 function extractFile(internalPath) {
@@ -75,15 +76,15 @@ function extractFile(internalPath) {
 const required = [
   'extension/package.json',
   'extension/out/extension.js',
-  'extension/src/extension.ts',
   'extension/readme.md',
   'extension/changelog.md',
   'extension/LICENSE.txt',
   'extension/NOTICE',
-  'extension/media/',
+  'extension/media/devin-cli-chat.png',
+  'extension/media/devin-cli-chat-activity.svg',
 ];
 for (const req of required) {
-  if (hasPath(req)) ok(req + ' presente');
+  if (hasFile(req)) ok(req + ' presente');
   else fail(req + ' AUSENTE');
 }
 
@@ -91,6 +92,10 @@ for (const req of required) {
 const forbidden = [
   { path: 'node_modules/typescript', label: 'node_modules/typescript' },
   { path: 'node_modules/',           label: 'node_modules/' },
+  { path: 'src/',                    label: 'src/' },
+  { path: 'tsconfig.json',           label: 'tsconfig.json' },
+  { path: 'scripts/',                label: 'scripts/' },
+  { path: 'test/',                   label: 'test/' },
   { path: 'source/',                 label: 'diretório source/' },
   { path: '_old/',                   label: 'diretório _old/' },
   { path: 'VERSION_0.29',            label: 'VERSION_0.29_ANALISE.md' },
@@ -101,21 +106,17 @@ for (const { path: fp, label } of forbidden) {
   else ok('sem ' + label);
 }
 
-// ── 3. VSIX aninhado proibido ─────────────────────────────────────────────────
-// Usa unzip -l cujas linhas de arquivo têm formato: "  SIZE  DATE  TIME  PATH"
-// Ignora linhas de header/footer e verifica o final de cada linha (caminho do arquivo)
+// ── 3. Artefatos de pacote aninhados proibidos ───────────────────────────────
 const vsixBasename = path.basename(vsixPath);
-const nestedVsix = vsixFiles.filter(l => {
-  const trimmed = l.trim();
-  // Pular header/footer do unzip (linhas sem pattern de arquivo)
-  if (trimmed.startsWith('Archive:') || trimmed.startsWith('-----') || trimmed === '') return false;
-  if (/^Length\s+Date/.test(trimmed) || /^\d+ files/.test(trimmed)) return false;
-  // O campo de nome do arquivo é sempre o último campo na saída do unzip -l
-  // mas como paths podem ter espaços, usamos outro critério: a linha termina em .vsix
-  return trimmed.endsWith('.vsix') && !trimmed.endsWith(vsixBasename);
+const nestedPackage = vsixFiles.find(f => {
+  const base = path.basename(f);
+  if (base === vsixBasename) return false;
+  return /\.vsix(\.|$)/.test(base) ||
+    /^devin-cli-chat-\d+\.\d+\.\d+/.test(base) ||
+    /\.(zip|tgz)$/.test(base);
 });
-if (nestedVsix.length > 0) fail('contém VSIX aninhado: ' + nestedVsix[0]);
-else ok('sem VSIX aninhado');
+if (nestedPackage) fail('contém artefato de pacote aninhado: ' + nestedPackage);
+else ok('sem artefatos de pacote aninhados');
 
 // ── 4. Versão interna bate com esperada ───────────────────────────────────────
 const pkgContent = extractFile('extension/package.json');

@@ -7,6 +7,10 @@ Vscode/source/
 Vscode/.vscode-test/
 Vscode/coverage/
 Vscode/*.vsix
+Vscode/*.vsix.*
+Vscode/devin-cli-chat-*
+Vscode/*.tgz
+Vscode/*.zip
 JetBrains/build/
 JetBrains/.gradle/
 JetBrains/*.zip

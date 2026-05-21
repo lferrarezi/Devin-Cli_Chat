@@ -115,6 +115,27 @@ function selectedSkills() {
 function devinPath() { return String(cfg().get('caminhoDevin') || 'devin'); }
 function defaultCwd() { return workspaceRoot() || os.homedir(); }
 
+function realPathIfExists(filePath) {
+  try {
+    if (fs.existsSync(filePath)) return fs.realpathSync.native ? fs.realpathSync.native(filePath) : fs.realpathSync(filePath);
+  } catch (_) {}
+  return path.resolve(filePath);
+}
+function isPathInside(parent, child) {
+  const relative = path.relative(parent, child);
+  return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+function resolveWorkspacePathSafe(relPath) {
+  const root = workspaceRoot();
+  if (!root) return null;
+  const rootReal = realPathIfExists(root);
+  const raw = String(relPath || '').replace(/\\/g, path.sep).trim();
+  const candidate = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(rootReal, raw);
+  const candidateReal = realPathIfExists(candidate);
+  if (!isPathInside(rootReal, candidateReal)) return null;
+  return candidateReal;
+}
+
 function findGitBash() {
   const candidates = [
     expandHome(cfg().get('gitBashPath')),
@@ -937,9 +958,10 @@ class ChatViewProvider {
     try {
       const root = workspaceRoot();
       if (!root) { this.post({ type: 'workspaceList', path: relPath || '', entries: [], error: 'Sem workspace aberto.' }); return; }
-    const safe = String(relPath || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\.\.\/?/g, '');
-      const dir = safe ? path.join(root, safe) : root;
+      const dir = resolveWorkspacePathSafe(relPath || '');
+      if (!dir) { this.post({ type: 'workspaceList', path: '', entries: [], error: 'Diretorio fora do workspace.' }); return; }
       if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) { this.post({ type: 'workspaceList', path: '', entries: [], error: 'Diretorio invalido.' }); return; }
+      const safe = path.relative(root, dir).replace(/\\/g, '/');
       const skip = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.venv', '__pycache__', '.next', '.nuxt', '.cache', 'target', '.idea']);
       const list = fs.readdirSync(dir, { withFileTypes: true })
         .filter(e => !e.name.startsWith('.') || ['.cognition', '.devin', '.claude', '.cursor', '.vscode'].includes(e.name))
@@ -959,7 +981,8 @@ class ChatViewProvider {
   async attachWorkspacePath(relPath) {
     const root = workspaceRoot();
     if (!root) return;
-    const abs = path.join(root, String(relPath || '').replace(/\\/g, '/').replace(/^\/+/, ''));
+    const abs = resolveWorkspacePathSafe(relPath || '');
+    if (!abs) { this.post({ type: 'action', ok: false, text: 'Caminho fora do workspace.' }); return; }
     if (!fs.existsSync(abs)) { this.post({ type: 'action', ok: false, text: 'Caminho invalido.' }); return; }
     if (fs.statSync(abs).isDirectory()) { await this.attachFolder(relPath); return; }
     try {
@@ -976,8 +999,9 @@ class ChatViewProvider {
   async attachFolder(relPath) {
     const root = workspaceRoot();
     if (!root) return;
-    const safe = String(relPath || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\.\.\/?/g, '');
-    const abs = safe ? path.join(root, safe) : root;
+    const abs = resolveWorkspacePathSafe(relPath || '');
+    if (!abs) { this.post({ type: 'action', ok: false, text: 'Pasta fora do workspace.' }); return; }
+    const safe = path.relative(root, abs).replace(/\\/g, '/');
     if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) { this.post({ type: 'action', ok: false, text: 'Pasta invalida.' }); return; }
     const item = this.readFolderItem(abs, safe ? path.basename(abs) : workspaceName());
     if (item.files && item.files.length) this.post({ type: 'attachItems', items: [item] });
@@ -1937,5 +1961,5 @@ function deactivate() {
 module.exports = {
   activate,
   deactivate,
-  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun, automaticEditorContext }
+  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe }
 };

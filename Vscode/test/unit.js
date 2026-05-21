@@ -136,6 +136,7 @@ const {
   scanSkills,
   cancelIntegratedRun,
   automaticEditorContext,
+  resolveWorkspacePathSafe,
 } = ext._internal;
 
 // ── Mini runner de testes ─────────────────────────────────────────────────────
@@ -550,6 +551,47 @@ test('automaticEditorContext: modo=somente-arquivo com selecao → retorna arqui
   assert.ok(r.promptBlock.includes('arquivo todo aqui'));
   mockConfigValues.modoContextoEditorAutomatico = 'selecao-ou-arquivo';
   mockVscode.window.activeTextEditor = null;
+});
+
+// ── Testes: workspace path safety ────────────────────────────────────────────
+console.log('\n── workspace path safety ──');
+
+test('resolveWorkspacePathSafe permite caminho relativo dentro do workspace', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'devin-safe-root-'));
+  mockVscode.workspace.workspaceFolders = [{ name: 'safe', uri: mockVscode.Uri.file(root) }];
+  const resolved = resolveWorkspacePathSafe('src/app.ts');
+  const realRoot = fs.realpathSync.native ? fs.realpathSync.native(root) : fs.realpathSync(root);
+  assert.strictEqual(resolved, path.join(realRoot, 'src', 'app.ts'));
+  mockVscode.workspace.workspaceFolders = null;
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('resolveWorkspacePathSafe bloqueia traversal fora do workspace', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'devin-safe-root-'));
+  mockVscode.workspace.workspaceFolders = [{ name: 'safe', uri: mockVscode.Uri.file(root) }];
+  assert.strictEqual(resolveWorkspacePathSafe('../outside.txt'), null);
+  assert.strictEqual(resolveWorkspacePathSafe('sub/../../outside.txt'), null);
+  mockVscode.workspace.workspaceFolders = null;
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('resolveWorkspacePathSafe bloqueia path absoluto fora do workspace', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'devin-safe-root-'));
+  const outside = path.join(os.tmpdir(), 'outside.txt');
+  mockVscode.workspace.workspaceFolders = [{ name: 'safe', uri: mockVscode.Uri.file(root) }];
+  assert.strictEqual(resolveWorkspacePathSafe(outside), null);
+  mockVscode.workspace.workspaceFolders = null;
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+// ── Testes: prerelease workflow ──────────────────────────────────────────────
+console.log('\n── prerelease workflow ──');
+
+test('publish workflow calcula flag de pre-release para versão menor ímpar', () => {
+  const workflow = fs.readFileSync(path.join(__dirname, '..', '..', '.github', 'workflows', 'publish.yml'), 'utf8');
+  assert.ok(workflow.includes('minor % 2 === 1'), 'workflow deve detectar versão menor ímpar');
+  assert.ok(workflow.includes('--pre-release'), 'workflow deve empacotar/publicar pre-release com --pre-release');
+  assert.ok(workflow.includes('prerelease_flag'), 'workflow deve propagar flag de pre-release');
 });
 
 // ── Teste: activate smoke ─────────────────────────────────────────────────────

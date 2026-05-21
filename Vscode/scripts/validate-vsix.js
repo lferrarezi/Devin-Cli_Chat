@@ -14,6 +14,8 @@ const cp   = require('child_process');
 const root = path.join(__dirname, '..');
 const pkg  = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const expectedVersion = pkg.version;
+const [, expectedMinor = 0] = expectedVersion.split('.').map(Number);
+const expectedMarketplacePrerelease = Number.isInteger(expectedMinor) && expectedMinor % 2 === 1;
 
 // ── Localizar VSIX ────────────────────────────────────────────────────────────
 let vsixPath;
@@ -70,6 +72,12 @@ function extractFile(internalPath) {
   } catch (e) {
     return null;
   }
+}
+
+function manifestHasPrerelease() {
+  const manifest = extractFile('extension.vsixmanifest');
+  if (!manifest) return false;
+  return /Microsoft\.VisualStudio\.Code\.PreRelease"\s+Value="true"/.test(manifest);
 }
 
 // ── 1. Arquivos obrigatórios ───────────────────────────────────────────────────
@@ -139,18 +147,20 @@ if (!pkgContent) {
 }
 
 // ── 4b. Validações específicas para Release Candidate ─────────────────────────
-const isPrerelease = expectedVersion.includes('-');
+const isPrerelease = expectedVersion.includes('-') || expectedMarketplacePrerelease;
 if (isPrerelease) {
-  console.log('  (RC) versão prerelease detectada: ' + expectedVersion);
+  console.log('  (pre-release) versão prerelease detectada: ' + expectedVersion);
   // SemVer prerelease: deve conter sufixo com hífem e pelo menos um segmento
-  const semverPre = /^\d+\.\d+\.\d+-.+$/.test(expectedVersion);
-  if (semverPre) ok('versão SemVer prerelease válida: ' + expectedVersion);
-  else fail('formato de versão prerelease inválido: ' + expectedVersion);
-  // preview: true obrigatório em releases candidate
-  if (innerPkg) {
-    if (innerPkg.preview === true) ok('"preview": true presente (obrigatório no RC)');
-    else fail('"preview": true AUSENTE no package.json do RC');
+  if (expectedVersion.includes('-')) {
+    const semverPre = /^\d+\.\d+\.\d+-.+$/.test(expectedVersion);
+    if (semverPre) ok('versão SemVer prerelease válida: ' + expectedVersion);
+    else fail('formato de versão prerelease inválido: ' + expectedVersion);
   }
+  if (expectedMarketplacePrerelease) ok('minor ímpar tratado como pre-release de Marketplace');
+  if (manifestHasPrerelease()) ok('manifest VSIX marcado como pre-release');
+  else fail('manifest VSIX sem Microsoft.VisualStudio.Code.PreRelease=true');
+} else if (manifestHasPrerelease()) {
+  fail('versão final/par marcada indevidamente como pre-release no manifest');
 }
 
 // ── 5. Sintaxe do extension.js extraído ──────────────────────────────────────

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.2
+
+- Corrige erro ao enviar anexos com bytes nulos, removendo `\0` do prompt antes de chamar o Devin CLI.
+- Adiciona sugestoes de slash commands ao digitar `/` no campo de mensagem.
+- Adiciona sugestoes de arquivos do workspace ao digitar `@`, anexando o arquivo escolhido.
+- Simplifica botoes de excluir/limpar historico no webview para evitar bloqueio por `confirm()`.
+
 ## 1.9.1
 
 - Adiciona importacao de arquivo Markdown como skill pelo seletor de skills.

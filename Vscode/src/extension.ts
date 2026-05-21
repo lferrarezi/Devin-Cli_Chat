@@ -108,6 +108,9 @@ function validateWebviewMessage(raw) {
     const text = safeString(raw.text, 200000);
     return text === undefined ? null : { type, text };
   }
+  if (type === 'searchWorkspaceFiles') {
+    return { type, query: safeString(raw.query || '', 200) || '' };
+  }
   if (type === 'setModel' || type === 'setMode' || type === 'setAgent' || type === 'toggleSkill') {
     const value = safeString(raw.value, 200);
     return value === undefined ? null : { type, value };
@@ -169,6 +172,9 @@ function exportSessionMarkdown(session) {
 }
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+function sanitizePromptText(value) {
+  return String(value == null ? '' : value).replace(/\u0000/g, '');
 }
 function sanitizeModel(value) {
   const s = String(value || '').trim().toLowerCase();
@@ -274,7 +280,7 @@ function fullPrompt(text) {
   const skillsHint = skills.length
     ? `Invoque a skill via tool 'skill' quando aplicavel: ${skills.map(s => `"${s}"`).join(', ')}. Siga as instrucoes do respectivo SKILL.md.`
     : '';
-  return [prefix, context, agentHint, skillsHint, text].filter(Boolean).join('\n\n');
+  return sanitizePromptText([prefix, context, agentHint, skillsHint, text].filter(Boolean).join('\n\n'));
 }
 function terminalCommand(text) {
   const executable = shellQuote(devinPath());
@@ -874,6 +880,7 @@ class ChatViewProvider {
         if (type === 'listWorkspace') { this.listWorkspaceDir(message.path || ''); return; }
         if (type === 'attachFolder') { await this.attachFolder(message.path || ''); return; }
         if (type === 'attachWorkspacePath') { await this.attachWorkspacePath(message.path || ''); return; }
+        if (type === 'searchWorkspaceFiles') { await this.searchWorkspaceFiles(message.query || ''); return; }
         if (type === 'send') { await this.send(message.text || '', { echoUser: message.echo !== false, displayText: message.displayText || message.text || '', hasExplicitContext: !!message.hasExplicitContext }); return; }
         if (type === 'terminal') {
           openTerminal(message.text || '');
@@ -1243,6 +1250,25 @@ class ChatViewProvider {
     }
   }
 
+  async searchWorkspaceFiles(query) {
+    try {
+      const root = workspaceRoot();
+      if (!root) { this.post({ type: 'workspaceFileSuggestions', query, files: [] }); return; }
+      const q = String(query || '').toLowerCase();
+      const found = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,dist,build,out,.venv,__pycache__,.next,.nuxt,.cache,target,.idea}/**', 1000);
+      const files = found
+        .map(uri => {
+          const rel = path.relative(root, uri.fsPath).replace(/\\/g, '/');
+          return { label: rel, path: rel, base: path.basename(uri.fsPath) };
+        })
+        .filter(f => !q || f.label.toLowerCase().includes(q) || f.base.toLowerCase().includes(q))
+        .slice(0, 20);
+      this.post({ type: 'workspaceFileSuggestions', query, files });
+    } catch (err) {
+      this.post({ type: 'workspaceFileSuggestions', query, files: [], error: err && err.message ? err.message : String(err) });
+    }
+  }
+
   async attachFolder(relPath) {
     const root = workspaceRoot();
     if (!root) return;
@@ -1510,6 +1536,11 @@ textarea{width:100%;min-height:62px;max-height:200px;resize:none;background:tran
 .menu .empty{padding:8px 12px;color:var(--muted);font-size:11px}
 .menu .menuAction{width:100%;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--fg);cursor:pointer;text-align:left;padding:7px 12px;font-size:12px}
 .menu .menuAction:hover{background:var(--hover)}
+.suggestMenu{position:absolute;left:10px;right:10px;bottom:74px;max-height:220px;overflow:auto;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 22px rgba(0,0,0,.35);z-index:45;padding:4px 0;font-size:12px}
+.suggestItem{display:flex;flex-direction:column;gap:2px;padding:7px 10px;cursor:pointer}
+.suggestItem:hover,.suggestItem.active{background:var(--hover)}
+.suggestItem .title{color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.suggestItem .desc{color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 body.narrow .chipBtn .chipText{display:none}
 body.narrow .chipBtn{padding:0 6px;width:30px;justify-content:center}
 body.narrow .chipBtn.alwaysText .chipText{display:inline}
@@ -1584,6 +1615,7 @@ function txt(v){ return String(v == null ? '' : v); }
 function post(m){ vscode.postMessage(m); }
 function setStatus(v){ /* status removido da barra */ }
 function estTokens(t){ if(!t) return 0; return Math.max(1, Math.ceil(String(t).length/4)); }
+function stripNulls(t){ return String(t == null ? '' : t).replace(/\\u0000/g, ''); }
 
 function setBusy(v){ busy = !!v; document.body.classList.toggle('is-busy', busy); var s = byId('send'); if(s) s.disabled = false; updateGate(); }
 function setPrompt(v){ var el = byId('prompt'); if(el){ el.value = txt(v); el.focus && el.focus(); updateTokens(); } }
@@ -1620,8 +1652,8 @@ function fmtTok(n){
 }
 function attachmentTextForTokens(item){
   if(!item) return '';
-  if(item.type === 'folder' && item.files){ return item.files.map(function(f){ return f.text || ''; }).join('\\n'); }
-  return item.text || '';
+  if(item.type === 'folder' && item.files){ return item.files.map(function(f){ return stripNulls(f.text || ''); }).join('\\n'); }
+  return stripNulls(item.text || '');
 }
 function updateTokens(){
   var el = byId('tokenPie'); if(!el) return;
@@ -1687,12 +1719,12 @@ function attachmentFullBlock(item){
     var truncNote = item.truncated ? '\\n\\n[NOTA: pasta truncada — exibindo ' + files.length + ' arquivo(s); demais arquivos ignorados por limite ou por serem muito grandes (>1 MB).]' : '';
     return files.map(function(f){
       var lang = f.language || '';
-      return '\\n\\nArquivo anexado ' + (f.rel || f.file || f.base || 'arquivo') + ' (' + lang + '):\\n' + fence + lang + '\\n' + (f.text || '') + '\\n' + fence;
+      return '\\n\\nArquivo anexado ' + (f.rel || f.file || f.base || 'arquivo') + ' (' + lang + '):\\n' + fence + lang + '\\n' + stripNulls(f.text || '') + '\\n' + fence;
     }).join('') + truncNote;
   }
   var heading = item.type === 'file' ? ('Arquivo anexado ' + (item.file || item.label)) : ('Contexto anexado de ' + item.label);
   var fileTruncNote = item.truncated ? '\\n[NOTA: arquivo truncado — exibindo apenas os primeiros bytes por limite de tamanho.]' : '';
-  return '\\n\\n' + heading + ' (' + (item.language||'') + '):\\n' + fence + (item.language||'') + '\\n' + (item.text || '') + '\\n' + fence + fileTruncNote;
+  return '\\n\\n' + heading + ' (' + (item.language||'') + '):\\n' + fence + (item.language||'') + '\\n' + stripNulls(item.text || '') + '\\n' + fence + fileTruncNote;
 }
 
 function renderContextChips(){
@@ -1790,7 +1822,7 @@ function renderHistory(sessions){
     exp.addEventListener('click', function(e){ e.stopPropagation(); post({ type: 'exportSession', id: s.id }); });
     del.addEventListener('click', function(e){
       e.stopPropagation();
-      if(confirm('Excluir esta conversa do historico?')) post({ type: 'deleteSession', id: s.id });
+      post({ type: 'deleteSession', id: s.id });
     });
     actions.appendChild(load); actions.appendChild(exp); actions.appendChild(del);
     div.appendChild(t); div.appendChild(m); div.appendChild(actions);
@@ -1936,6 +1968,72 @@ function openSkillsMenu(){
 
 var browserPath = '';
 var browserMenuEl = null;
+var suggestMenuEl = null;
+var suggestTrigger = null;
+var slashItems = [
+  { label: '/review', desc: 'Revisar git diff atual' },
+  { label: '/tests ', desc: 'Planejar/implementar testes para um tema' },
+  { label: '/plan ', desc: 'Criar plano tecnico' },
+  { label: '/explain ', desc: 'Explicar arquitetura ou trecho' },
+  { label: '/security ', desc: 'Revisar riscos de seguranca' },
+  { label: '/docs ', desc: 'Gerar documentacao pratica' },
+  { label: '/commit-msg', desc: 'Gerar mensagem de commit' }
+];
+function closeSuggestions(){
+  if(suggestMenuEl && suggestMenuEl.parentNode) suggestMenuEl.parentNode.removeChild(suggestMenuEl);
+  suggestMenuEl = null; suggestTrigger = null;
+}
+function promptTrigger(){
+  var el = byId('prompt'); if(!el) return null;
+  var before = el.value.slice(0, el.selectionStart || 0);
+  var slash = before.match(new RegExp('(?:^|\\\\n)(/[^\\\\s]*)$'));
+  if(slash) return { type: 'slash', token: slash[1], start: before.length - slash[1].length };
+  var at = before.match(new RegExp('(?:^|\\\\s)@([^\\\\s]*)$'));
+  if(at) return { type: 'file', token: at[1], start: before.length - at[1].length - 1 };
+  return null;
+}
+function replacePromptRange(start, end, value){
+  var el = byId('prompt'); if(!el) return;
+  var v = el.value;
+  el.value = v.slice(0, start) + value + v.slice(end);
+  el.selectionStart = el.selectionEnd = start + value.length;
+  el.focus(); updateTokens(); updateSuggestions();
+}
+function renderSuggestions(items, trigger){
+  closeSuggestions();
+  if(!items || !items.length) return;
+  suggestTrigger = trigger;
+  var menu = document.createElement('div'); menu.className = 'suggestMenu';
+  items.slice(0, 12).forEach(function(it){
+    var row = document.createElement('div'); row.className = 'suggestItem';
+    var title = document.createElement('div'); title.className = 'title'; title.textContent = it.label;
+    var desc = document.createElement('div'); desc.className = 'desc'; desc.textContent = it.desc || it.path || '';
+    row.appendChild(title); row.appendChild(desc);
+    row.addEventListener('mousedown', function(ev){
+      ev.preventDefault(); ev.stopPropagation();
+      var el = byId('prompt'); if(!el || !suggestTrigger) return;
+      if(suggestTrigger.type === 'slash') replacePromptRange(suggestTrigger.start, el.selectionStart || 0, it.label);
+      else {
+        replacePromptRange(suggestTrigger.start, el.selectionStart || 0, '@' + it.path + ' ');
+        post({ type: 'attachWorkspacePath', path: it.path });
+      }
+      closeSuggestions();
+    });
+    menu.appendChild(row);
+  });
+  document.body.appendChild(menu);
+  suggestMenuEl = menu;
+}
+function updateSuggestions(){
+  var trig = promptTrigger();
+  if(!trig){ closeSuggestions(); return; }
+  if(trig.type === 'slash'){
+    var q = trig.token.toLowerCase();
+    renderSuggestions(slashItems.filter(function(i){ return i.label.indexOf(q) === 0; }), trig);
+  } else {
+    post({ type: 'searchWorkspaceFiles', query: trig.token });
+  }
+}
 function openAttachBrowser(){
   closeAllMenus();
   var anchor = byId('attachBtn');
@@ -2040,7 +2138,7 @@ function action(name, element){
   if(name === 'starter') return sendPrompt(element.getAttribute('data-prompt') || '');
   if(name === 'toggleHistory'){ if(togglePanel('historyPanel')) post({ type: 'getHistory' }); return; }
   if(name === 'openSkillsMenu') return openSkillsMenu();
-  if(name === 'clearHistory'){ if(confirm('Limpar todo o historico?')) post({ type: 'clearHistory' }); return; }
+  if(name === 'clearHistory'){ post({ type: 'clearHistory' }); return; }
   if(name === 'openModelMenu') return openModelMenu();
   if(name === 'openAgentMenu') return openAgentMenu();
   if(name === 'openModeMenu') return openModeMenu();
@@ -2051,7 +2149,7 @@ function action(name, element){
 
 document.addEventListener('click', function(e){
   var b = e.target && e.target.closest ? e.target.closest('[data-action]') : null;
-  if(!b){ if(!e.target.closest('.menu')) closeAllMenus(); return; }
+  if(!b){ if(!e.target.closest('.menu')) closeAllMenus(); if(!e.target.closest('.suggestMenu')) closeSuggestions(); return; }
   e.preventDefault();
   closeAllMenus();
   try { action(b.getAttribute('data-action'), b); } catch(err){ clientError('acao ' + b.getAttribute('data-action'), err); }
@@ -2060,7 +2158,7 @@ document.addEventListener('click', function(e){
 var pe = byId('prompt');
 if(pe){
   pe.addEventListener('keydown', function(ev){ if(ev.key === 'Enter' && !ev.shiftKey){ ev.preventDefault(); sendPrompt(getPrompt()); } });
-  pe.addEventListener('input', updateTokens);
+  pe.addEventListener('input', function(){ updateTokens(); updateSuggestions(); });
 }
 
 function applyResponsive(){
@@ -2125,6 +2223,10 @@ window.addEventListener('message', function(ev){
     renderContextChips(); updateTokens();
   }
   if(m.type === 'workspaceList'){ renderBrowser(m); }
+  if(m.type === 'workspaceFileSuggestions'){
+    var trig = promptTrigger();
+    if(trig && trig.type === 'file') renderSuggestions((m.files || []).map(function(f){ return { label: '@' + f.label, desc: 'Anexar arquivo do workspace', path: f.path }; }), trig);
+  }
 });
 
 setBusy(false); updateTokens(); renderContextChips();
@@ -2231,5 +2333,5 @@ function deactivate() {
 module.exports = {
   activate,
   deactivate,
-  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, skillNameFromMarkdownFile, importSkillMarkdownFile, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown, shouldApplyFirstInstallRightSidebar, applyFirstInstallRightSidebar }
+  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, skillNameFromMarkdownFile, importSkillMarkdownFile, loadHistory, saveHistory, sanitizeModel, sanitizePromptText, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown, shouldApplyFirstInstallRightSidebar, applyFirstInstallRightSidebar }
 };

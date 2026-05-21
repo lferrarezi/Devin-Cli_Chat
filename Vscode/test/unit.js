@@ -130,6 +130,7 @@ if (!fs.existsSync(extPath)) {
 const ext = require(extPath);
 const {
   sanitizeModel,
+  sanitizePromptText,
   isSafeModelId,
   baseArgs,
   fullPrompt,
@@ -340,6 +341,12 @@ test('skills selecionadas são mencionadas no prompt', () => {
   mockConfigValues.skillsSelecionadas = [];
 });
 
+test('fullPrompt remove bytes nulos antes de chamar a CLI', () => {
+  const prompt = fullPrompt('arquivo binario\u0000com byte nulo');
+  assert.ok(!prompt.includes('\u0000'), 'prompt final nao pode conter byte nulo');
+  assert.strictEqual(sanitizePromptText('a\u0000b'), 'ab');
+});
+
 // ── Testes: modelsForUi ───────────────────────────────────────────────────────
 console.log('\n── modelsForUi ──');
 
@@ -433,6 +440,15 @@ test('script da webview tem ação cancelRun', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'extension.ts'), 'utf8');
   const scriptMatch = src.match(/<script nonce="\$\{nonce\}">([\s\S]*?)<\/script>/);
   assert.ok(scriptMatch && scriptMatch[1].includes('cancelRun'), 'deve ter cancelRun');
+});
+
+test('script da webview tem sugestoes de slash command e arquivo com @', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'extension.ts'), 'utf8');
+  const scriptMatch = src.match(/<script nonce="\$\{nonce\}">([\s\S]*?)<\/script>/);
+  const script = scriptMatch ? scriptMatch[1] : '';
+  assert.ok(script.includes('slashItems'), 'deve conter lista de slash commands');
+  assert.ok(script.includes('searchWorkspaceFiles'), 'deve buscar arquivos do workspace para @');
+  assert.ok(script.includes('workspaceFileSuggestions'), 'deve renderizar sugestoes de arquivos');
 });
 
 // ── Testes: automaticEditorContext ────────────────────────────────────────────
@@ -668,6 +684,10 @@ test('validateWebviewMessage rejeita payload malformado', () => {
 test('validateWebviewMessage normaliza payload valido', () => {
   const msg = validateWebviewMessage({ type: 'send', text: 'ola', displayText: 'ola', echo: false, hasExplicitContext: true });
   assert.deepStrictEqual(msg, { type: 'send', text: 'ola', displayText: 'ola', echo: false, hasExplicitContext: true });
+});
+
+test('validateWebviewMessage aceita busca de arquivos do workspace', () => {
+  assert.deepStrictEqual(validateWebviewMessage({ type: 'searchWorkspaceFiles', query: 'src/ext' }), { type: 'searchWorkspaceFiles', query: 'src/ext' });
 });
 
 // ── Testes: slash commands e export ──────────────────────────────────────────

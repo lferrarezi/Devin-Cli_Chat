@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.6
+
+- O seletor de modelos passa a priorizar modelos descobertos do Devin CLI local do usuario.
+- Aliases fixos ficam apenas como fallback quando nao houver descoberta local.
+- Ao abrir o seletor de modelo, a extensao tenta atualizar a lista a partir do Devin CLI antes de mostrar as opcoes.
+
 ## 1.9.5
 
 - Remove o seletor Integrado/Terminal do composer.

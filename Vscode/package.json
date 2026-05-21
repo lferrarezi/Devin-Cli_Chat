@@ -2,7 +2,7 @@
 	"name": "devin-cli-chat",
 	"displayName": "Devin Cli Chat",
 	"description": "Tela propria de chat para Devin CLI no VS Code, em portugues brasileiro, com contexto compacto, aliases reais do CLI e anexos resilientes.",
-	"version": "1.9.5",
+	"version": "1.9.6",
 	"publisher": "luiz-alberto-abarca-ferrarezi",
 	"author": {
 		"name": "Luiz Alberto Abarca Ferrarezi"
@@ -223,12 +223,12 @@
 						"type": "string"
 					},
 					"default": [],
-					"description": "Modelos manuais de fallback. A versao 0.30.0 sanitiza todos os valores para os aliases reais aceitos pelo Devin CLI: auto, sonnet, opus, swe, gpt."
+					"description": "Modelos descobertos ou informados manualmente para este Devin CLI. A extensao prioriza estes valores antes dos aliases de fallback."
 				},
 				"devinCliChat.modeloAtual": {
 					"type": "string",
 					"default": "auto",
-					"description": "Modelo selecionado atualmente. Valores validos: auto, sonnet, opus, swe, gpt. Valores legados sao convertidos para auto."
+					"description": "Modelo selecionado atualmente. Use auto para nao forcar modelo ou informe um modelo aceito pelo Devin CLI local."
 				},
 				"devinCliChat.argumentoModelo": {
 					"type": "string",
@@ -296,12 +296,12 @@
 				"devinCliChat.descobrirModelosAutomaticamente": {
 					"type": "boolean",
 					"default": true,
-					"description": "Quando habilitado, monta o seletor a partir de config.json, caches locais e modelos manuais. A leitura roda em segundo plano e nao inicia processos externos por padrao."
+					"description": "Quando habilitado, monta o seletor a partir do Devin CLI local, config.json, caches locais e modelos manuais."
 				},
 				"devinCliChat.comandoDescobertaModelos": {
 					"type": "string",
 					"default": "",
-					"description": "Comando opcional e explicito para listar modelos. Exemplo: models --json. So e executado quando preenchido."
+					"description": "Comando opcional para listar modelos. Exemplo: models --json. Quando vazio, a extensao usa a ajuda do Devin CLI e caches locais como fonte de descoberta."
 				},
 				"devinCliChat.timeoutDescobertaModelosMs": {
 					"type": "number",

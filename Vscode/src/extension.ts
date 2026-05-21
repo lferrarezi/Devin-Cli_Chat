@@ -9,8 +9,7 @@ const cp = require('child_process');
 const crypto = require('crypto');
 
 const EXT = 'devinCliChat';
-const VALID_MODELS = ['auto', 'sonnet', 'opus', 'swe', 'gpt'];
-const FALLBACK_MODELS = ['auto', 'adaptive', 'sonnet', 'opus', 'swe', 'gpt', 'codex'];
+const FALLBACK_MODELS = ['auto', 'sonnet', 'opus', 'codex'];
 const HISTORY_KEY = 'devinCliChat.chatHistory.v1';
 const FIRST_INSTALL_LAYOUT_KEY = 'devinCliChat.firstInstallLayout.v1';
 const MAX_HISTORY = 50;
@@ -34,7 +33,10 @@ function log(msg) {
 }
 
 function metadataCacheMs() { return 10000; }
-function modelCacheMs() { return Math.max(0, Number(cfg().get('cacheModelosMs') || 1800000)); }
+function modelCacheMs() {
+  const value = cfg().get('cacheModelosMs');
+  return Math.max(0, Number(value === undefined || value === null ? 1800000 : value));
+}
 function invalidateMetaCache() {
   modelCache = { at: 0, values: undefined };
   agentsCache = { at: 0, values: undefined };
@@ -466,7 +468,22 @@ function cacheModelFiles() {
   return Array.from(new Set(files));
 }
 function looksLikeModel(value) {
-  return VALID_MODELS.includes(String(value || '').trim().toLowerCase());
+  const s = String(value || '').trim().toLowerCase();
+  if (!isSafeModelId(s)) return false;
+  if (['model', 'models', 'use', 'eg', 'env', 'devin_model', 'default'].includes(s)) return false;
+  return /^(auto|sonnet|opus|codex|gpt|claude|o[0-9]|gpt-|claude-|.*[._-].*)/.test(s);
+}
+function parseModelsFromText(text) {
+  const out = [];
+  const raw = String(text || '');
+  const quoted = raw.match(/"([^"]{2,80})"/g) || [];
+  for (const q of quoted) {
+    const value = q.slice(1, -1).trim();
+    if (looksLikeModel(value)) out.push(value);
+  }
+  const matches = raw.match(/[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}/g) || [];
+  for (const value of matches) if (looksLikeModel(value)) out.push(value);
+  return Array.from(new Set(out.map(sanitizeModel))).filter(Boolean);
 }
 
 function readModelsFromCaches() {
@@ -479,10 +496,7 @@ function readModelsFromCaches() {
       if (!stat.isFile() || stat.size > limit) continue;
       const buffer = fs.readFileSync(file);
       const text = buffer.toString('utf8');
-      const matches = text.match(/[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}/g) || [];
-      for (const value of matches) {
-        if (looksLikeModel(value)) out.push(value);
-      }
+      out.push(...parseModelsFromText(text));
     } catch (_) {}
   }
   return Array.from(new Set(out));
@@ -490,22 +504,22 @@ function readModelsFromCaches() {
 function discoverModelsFromCli() {
   return new Promise((resolve) => {
     const customCmd = String(cfg().get('comandoDescobertaModelos') || '').trim();
-    if (!customCmd) { resolve([]); return; }
+    const args = customCmd ? customCmd.split(/\s+/) : ['--help'];
     try {
-      cp.execFile(devinPath(), customCmd.split(/\s+/), {
+      cp.execFile(devinPath(), args, {
         cwd: defaultCwd(),
         timeout: Number(cfg().get('timeoutDescobertaModelosMs') || 2500),
         windowsHide: true
-      }, (err, stdout) => {
-        if (err || !stdout) { resolve([]); return; }
+      }, (err, stdout, stderr) => {
+        const output = [stdout || '', stderr || ''].join('\n');
+        if (err && !output.trim()) { resolve([]); return; }
         try {
-          const parsed = JSON.parse(stdout);
+          const parsed = JSON.parse(output);
           const list = Array.isArray(parsed) ? parsed : (parsed && parsed.models) || [];
-          resolve(list.map(m => typeof m === 'string' ? m : (m && (m.name || m.id))).filter(Boolean));
+          resolve(list.map(m => typeof m === 'string' ? m : (m && (m.name || m.id))).filter(looksLikeModel).map(sanitizeModel));
           return;
         } catch (_) {}
-        const matches = stdout.match(/[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}/g) || [];
-        resolve(matches.filter(looksLikeModel));
+        resolve(parseModelsFromText(output));
       });
     } catch (_) { resolve([]); }
   });
@@ -514,10 +528,13 @@ function modelsForUi() {
   const ttl = modelCacheMs();
   const now = Date.now();
   if (ttl > 0 && modelCache.values && now - modelCache.at < ttl) return modelCache.values;
-  const values = [configuredModel(), readCurrentModelFromDevinConfig(), ...manualModels(), ...readModelsFromCaches(), ...validModelsForUi()]
+  const configured = configuredModel();
+  const discovered = [readCurrentModelFromDevinConfig(), ...manualModels(), ...readModelsFromCaches()]
     .map(sanitizeModel)
-    .filter(Boolean);
-  const result = Array.from(new Set([...validModelsForUi(), ...values]));
+    .filter(Boolean)
+    .filter(v => v !== 'auto');
+  const values = discovered.length ? ['auto', configured, ...discovered] : ['auto', configured, ...validModelsForUi()];
+  const result = Array.from(new Set(values.map(sanitizeModel).filter(Boolean)));
   modelCache = { at: now, values: result };
   return result;
 }
@@ -757,17 +774,24 @@ function updateStatusBar() {
 async function pickManualModel() {
   const value = await vscode.window.showInputBox({
     title: 'Modelo Devin',
-    prompt: 'Aliases aceitos pelo Devin CLI nesta build: auto, sonnet, opus, swe, gpt.',
+    prompt: 'Informe um modelo aceito pelo seu Devin CLI, por exemplo claude-sonnet-4, claude-opus-4.6, opus ou codex.',
     value: configuredModel() === 'auto' ? '' : configuredModel()
   });
   if (!value || !value.trim()) return;
   const sanitized = sanitizeModel(value);
   if (sanitized !== String(value).trim().toLowerCase()) {
-    vscode.window.showInformationMessage(`Modelo "${value.trim()}" nao e aceito por esta versao do Devin CLI. Usando "${sanitized}".`);
+    vscode.window.showInformationMessage(`Modelo "${value.trim()}" foi normalizado para "${sanitized}".`);
   }
   await setConfig('modeloAtual', sanitized);
 }
 async function pickModel() {
+  invalidateMetaCache();
+  const extra = await discoverModelsFromCli();
+  if (extra.length) {
+    const merged = Array.from(new Set([...(cfg().get('modelosDisponiveis') || []), ...extra]));
+    await cfg().update('modelosDisponiveis', merged, vscode.ConfigurationTarget.Workspace);
+    invalidateMetaCache();
+  }
   const pick = await vscode.window.showQuickPick([...modelsForUi(), '+ Informar modelo manual'], {
     placeHolder: 'Selecione o modelo Devin'
   });
@@ -1411,6 +1435,24 @@ class ChatViewProvider {
     } catch (_) { payload.recentSessions = []; }
     try { payload.modelStatus = `${payload.models.length} modelos | ${payload.skills.length} skills | ${payload.tools.length} tools`; } catch (_) {}
     this.post(payload);
+    this.refreshModelsFromCliInBackground();
+  }
+
+  refreshModelsFromCliInBackground() {
+    if (!cfg().get('descobrirModelosAutomaticamente', true)) return;
+    if (this.refreshingModels) return;
+    this.refreshingModels = true;
+    discoverModelsFromCli().then(async extra => {
+      if (extra && extra.length) {
+        const merged = Array.from(new Set([...(cfg().get('modelosDisponiveis') || []), ...extra]));
+        await cfg().update('modelosDisponiveis', merged, vscode.ConfigurationTarget.Workspace);
+        invalidateMetaCache();
+        const models = modelsForUi();
+        this.post({ type: 'meta', models, model: configuredModel(), modelStatus: `${models.length} modelos do Devin CLI` });
+      }
+    }).catch(err => {
+      log('Falha ao descobrir modelos em background: ' + (err && err.message ? err.message : String(err)));
+    }).finally(() => { this.refreshingModels = false; });
   }
 
   async send(text, options) {

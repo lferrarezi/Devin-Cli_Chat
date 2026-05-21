@@ -370,11 +370,20 @@ test('sempre inclui "auto"', () => {
   assert.ok(models.includes('auto'), 'deve incluir auto: ' + JSON.stringify(models));
 });
 
-test('retorna pelo menos os aliases base', () => {
+test('usa modelos descobertos do Devin CLI antes dos aliases de fallback', () => {
+  mockConfigValues.modelosDisponiveis = ['claude-sonnet-4', 'claude-opus-4.6'];
   const models = modelsForUi();
-  for (const alias of ['auto', 'sonnet', 'opus']) {
-    assert.ok(models.includes(alias), 'deve incluir ' + alias);
-  }
+  assert.ok(models.includes('claude-sonnet-4'), 'deve incluir modelo descoberto');
+  assert.ok(models.includes('claude-opus-4.6'), 'deve incluir modelo descoberto');
+  assert.ok(!models.includes('gpt'), 'nao deve misturar fallback quando ha modelos descobertos');
+  mockConfigValues.modelosDisponiveis = [];
+});
+
+test('retorna lista utilizavel mesmo sem modelos manuais', () => {
+  mockConfigValues.modelosDisponiveis = [];
+  const models = modelsForUi();
+  assert.ok(models.length >= 1, 'deve retornar pelo menos auto ou modelo detectado');
+  assert.ok(models.includes('auto'), 'deve manter auto como opcao de nao forcar modelo');
 });
 
 // ── Testes: scanAgents / scanSkills ───────────────────────────────────────────

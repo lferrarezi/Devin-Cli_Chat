@@ -139,6 +139,8 @@ if (!pkgContent) {
     } else {
       fail('versão interna ' + innerPkg.version + ' != esperado ' + expectedVersion);
     }
+    if (innerPkg.publisher === pkg.publisher) ok('publisher interno correto: ' + innerPkg.publisher);
+    else fail('publisher interno ' + innerPkg.publisher + ' != esperado ' + pkg.publisher);
     if (innerPkg.main === './out/extension.js') ok('main aponta para ./out/extension.js');
     else fail('main incorreto: ' + innerPkg.main);
   } catch (e) {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10.1
+
+- Altera o publisher do Marketplace VS Code para `lferrarezi`, usando o novo owner `Luiz Ferrarezi`.
+- Mantem a versao final no canal estavel para validar instalacao em ambientes corporativos que bloqueavam o dominio antigo do publisher.
+
 ## 1.10.0
 
 - Promove para canal final o pacote validado da série 1.9.x para novas instalações pelo Marketplace.

@@ -143,6 +143,7 @@ const {
   baseArgs,
   fullPrompt,
   modelsForUi,
+  parseModelsFromText,
   effortsForUi,
   parseEffortSpecFromText,
   scanAgents,
@@ -408,12 +409,20 @@ test('sempre inclui "auto"', () => {
 });
 
 test('usa modelos descobertos do Devin CLI antes dos aliases de fallback', () => {
-  mockConfigValues.modelosDisponiveis = ['claude-sonnet-4', 'claude-opus-4.6'];
+  mockConfigValues.modelosDisponiveis = ['claude-sonnet-4', 'claude-opus-4.6', 'permission-mode', 'prompt-file', 'config.json'];
   const models = modelsForUi();
   assert.ok(models.includes('claude-sonnet-4'), 'deve incluir modelo descoberto');
   assert.ok(models.includes('claude-opus-4.6'), 'deve incluir modelo descoberto');
+  assert.ok(!models.includes('permission-mode'), 'nao deve incluir flag da CLI como modelo');
+  assert.ok(!models.includes('prompt-file'), 'nao deve incluir flag da CLI como modelo');
+  assert.ok(!models.includes('config.json'), 'nao deve incluir arquivo de config como modelo');
   assert.ok(!models.includes('gpt'), 'nao deve misturar fallback quando ha modelos descobertos');
   mockConfigValues.modelosDisponiveis = [];
+});
+
+test('parseModelsFromText ignora opcoes e arquivos da ajuda do CLI', () => {
+  const models = parseModelsFromText('Options: --model <MODEL> --permission-mode --prompt-file config.json e.g. "claude-sonnet-4", "claude-opus-4.6", "opus", "codex"');
+  assert.deepStrictEqual(models, ['claude-sonnet-4', 'claude-opus-4.6', 'opus', 'codex']);
 });
 
 test('retorna lista utilizavel mesmo sem modelos manuais', () => {

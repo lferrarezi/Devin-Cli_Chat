@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.9.8
+
+- Corrige a descoberta de modelos para ignorar opções da CLI e arquivos de configuração como `permission-mode`, `prompt-file` e `config.json`.
+- Filtra também modelos já persistidos em configuração local quando não parecem aliases/modelos reais.
+
 ## 1.9.7
 
 - Adiciona seletor dinamico de Effort quando o Devin CLI local expõe `--effort` ou `--reasoning-effort`.

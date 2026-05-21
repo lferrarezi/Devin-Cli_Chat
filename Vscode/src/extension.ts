@@ -11,6 +11,11 @@ const crypto = require('crypto');
 const EXT = 'devinCliChat';
 const FALLBACK_MODELS = ['auto', 'sonnet', 'opus', 'codex'];
 const COMMON_EFFORTS = ['low', 'medium', 'high'];
+const MODEL_TOKEN_BLOCKLIST = new Set([
+  'config.json', 'permission-mode', 'prompt-file', 'settings-file', 'api-key', 'base-url',
+  'model', 'models', 'use', 'eg', 'env', 'devin_model', 'default', 'help', 'version',
+  'print', 'verbose', 'debug', 'workspace', 'cache', 'team-settings', 'model-configs'
+]);
 const HISTORY_KEY = 'devinCliChat.chatHistory.v1';
 const FIRST_INSTALL_LAYOUT_KEY = 'devinCliChat.firstInstallLayout.v1';
 const MAX_HISTORY = 50;
@@ -471,7 +476,7 @@ async function setConfig(key, value) {
 }
 function manualModels() {
   const list = cfg().get('modelosDisponiveis') || [];
-  return Array.isArray(list) ? list.map(String).map(s => s.trim()).filter(Boolean) : [];
+  return Array.isArray(list) ? list.map(String).map(s => s.trim()).filter(looksLikeModel) : [];
 }
 function cacheModelFiles() {
   const custom = cfg().get('arquivosCacheModelos') || [];
@@ -489,8 +494,9 @@ function cacheModelFiles() {
 function looksLikeModel(value) {
   const s = String(value || '').trim().toLowerCase();
   if (!isSafeModelId(s)) return false;
-  if (['model', 'models', 'use', 'eg', 'env', 'devin_model', 'default'].includes(s)) return false;
-  return /^(auto|sonnet|opus|codex|gpt|claude|o[0-9]|gpt-|claude-|.*[._-].*)/.test(s);
+  if (MODEL_TOKEN_BLOCKLIST.has(s)) return false;
+  if (/^(auto|sonnet|opus|codex|swe)$/.test(s)) return true;
+  return /^(claude|gpt|o[0-9]|codex[-_.]|sonnet[-_.]|opus[-_.]|openai[-_.]|anthropic[-_.])/.test(s);
 }
 function parseModelsFromText(text) {
   const out = [];
@@ -2637,5 +2643,5 @@ function deactivate() {
 module.exports = {
   activate,
   deactivate,
-  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, effortsForUi, parseEffortSpecFromText, scanAgents, scanSkills, scanTools, skillNameFromMarkdownFile, importSkillMarkdownFile, importAgentMarkdownFile, importToolMarkdownFile, loadHistory, saveHistory, sanitizeModel, sanitizeEffort, sanitizePromptText, isSafeModelId, isSafeEffortId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown, shouldApplyFirstInstallRightSidebar, applyFirstInstallRightSidebar }
+  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, parseModelsFromText, effortsForUi, parseEffortSpecFromText, scanAgents, scanSkills, scanTools, skillNameFromMarkdownFile, importSkillMarkdownFile, importAgentMarkdownFile, importToolMarkdownFile, loadHistory, saveHistory, sanitizeModel, sanitizeEffort, sanitizePromptText, isSafeModelId, isSafeEffortId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown, shouldApplyFirstInstallRightSidebar, applyFirstInstallRightSidebar }
 };

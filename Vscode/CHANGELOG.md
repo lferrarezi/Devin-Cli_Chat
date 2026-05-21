@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.11.1
+
+- Adiciona publicacao automatica tambem no Open VSX Registry usando `OVSIX_PAT`, mantendo o mesmo VSIX publicado no Marketplace do VS Code.
+
 ## 1.11.0
 
 - Pre-release com nome exibido `Devin-Cli Chat for VS Code`.

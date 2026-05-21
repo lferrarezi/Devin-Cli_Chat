@@ -58,6 +58,13 @@ jobs:
           VSIX_FILE="devin-cli-chat-${{ steps.package.outputs.version }}.vsix"
           npx vsce publish ${{ steps.package.outputs.prerelease_flag }} --packagePath "$VSIX_FILE" --pat "$VSCE_PAT"
 
+      - name: Publish to Open VSX Registry
+        env:
+          OVSIX_PAT: ${{ secrets.OVSIX_PAT }}
+        run: |
+          VSIX_FILE="devin-cli-chat-${{ steps.package.outputs.version }}.vsix"
+          npx --yes ovsx publish --packagePath "$VSIX_FILE" ${{ steps.package.outputs.prerelease_flag }} --skip-duplicate --pat "$OVSIX_PAT"
+
       - name: Upload VSIX to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3

@@ -801,6 +801,14 @@ test('publish workflow calcula flag de pre-release para versão menor ímpar', (
   assert.ok(workflow.includes('prerelease_flag'), 'workflow deve propagar flag de pre-release');
 });
 
+test('publish workflow publica o mesmo VSIX no Open VSX', () => {
+  const workflow = fs.readFileSync(path.join(__dirname, '..', '..', '.github', 'workflows', 'publish.yml'), 'utf8');
+  assert.ok(workflow.includes('Publish to Open VSX Registry'), 'workflow deve ter etapa do Open VSX');
+  assert.ok(workflow.includes('OVSIX_PAT'), 'workflow deve usar a secret OVSIX_PAT');
+  assert.ok(workflow.includes('npx --yes ovsx publish'), 'workflow deve chamar ovsx publish');
+  assert.ok(workflow.includes('--packagePath "$VSIX_FILE"'), 'workflow deve publicar o VSIX ja validado');
+});
+
 // ── Testes: run state por sessão ─────────────────────────────────────────────
 console.log('\n── run state por sessão ──');
 

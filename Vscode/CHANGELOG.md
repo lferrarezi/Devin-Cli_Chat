@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.0
+
+- Promove para canal final o pacote validado da série 1.9.x para novas instalações pelo Marketplace.
+- Mantém as correções de pacote, descoberta de modelos, Effort dinâmico, anexos, agentes, skills, tools e chat integrado.
+- Corrige a URL canônica do repositório nos metadados publicados.
+
 ## 1.9.8
 
 - Corrige a descoberta de modelos para ignorar opções da CLI e arquivos de configuração como `permission-mode`, `prompt-file` e `config.json`.

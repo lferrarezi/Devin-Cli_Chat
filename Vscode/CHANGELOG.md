@@ -6,6 +6,7 @@
 - O arquivo `.md` selecionado passa a ser copiado para o diretorio padrao de skills do workspace como `<nome-normalizado>/SKILL.md`.
 - A skill importada e selecionada automaticamente e passa a aparecer na descoberta normal de skills.
 - Adiciona acao equivalente no menu de skills do painel.
+- Em primeira instalacao sem historico anterior, posiciona a Primary Sidebar do VS Code a direita para aproximar a experiencia de chat lateral.
 
 ## 1.9.0
 

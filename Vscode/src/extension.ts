@@ -12,6 +12,7 @@ const EXT = 'devinCliChat';
 const VALID_MODELS = ['auto', 'sonnet', 'opus', 'swe', 'gpt'];
 const FALLBACK_MODELS = ['auto', 'adaptive', 'sonnet', 'opus', 'swe', 'gpt', 'codex'];
 const HISTORY_KEY = 'devinCliChat.chatHistory.v1';
+const FIRST_INSTALL_LAYOUT_KEY = 'devinCliChat.firstInstallLayout.v1';
 const MAX_HISTORY = 50;
 const MAX_ATTACHMENT_BYTES = 1024 * 1024;
 const MAX_FOLDER_FILES = 50;
@@ -776,6 +777,29 @@ function loadHistory() {
 }
 async function saveHistory(sessions) {
   try { if (extContext) await extContext.globalState.update(HISTORY_KEY, sessions.slice(0, MAX_HISTORY)); } catch (_) {}
+}
+function shouldApplyFirstInstallRightSidebar(context) {
+  try {
+    if (!context || !context.globalState) return false;
+    if (context.globalState.get(FIRST_INSTALL_LAYOUT_KEY)) return false;
+    const history = context.globalState.get(HISTORY_KEY) || [];
+    return !Array.isArray(history) || history.length === 0;
+  } catch (_) {
+    return false;
+  }
+}
+async function applyFirstInstallRightSidebar(context) {
+  if (!shouldApplyFirstInstallRightSidebar(context)) return false;
+  try {
+    await vscode.workspace.getConfiguration('workbench').update('sideBar.location', 'right', vscode.ConfigurationTarget.Global);
+    await context.globalState.update(FIRST_INSTALL_LAYOUT_KEY, true);
+    log('Primeira instalacao: sideBar.location definido como right.');
+    return true;
+  } catch (err) {
+    log('Falha ao posicionar sidebar a direita: ' + (err && err.message ? err.message : String(err)));
+    try { await context.globalState.update(FIRST_INSTALL_LAYOUT_KEY, true); } catch (_) {}
+    return false;
+  }
 }
 
 class ChatViewProvider {
@@ -2118,6 +2142,7 @@ async function activate(context) {
   log(`Plataforma: ${process.platform} ${process.arch}`);
   log(`Devin CLI path configurado: ${devinPath()}`);
   log(`Workspace: ${workspaceRoot() || 'nenhum'}`);
+  await applyFirstInstallRightSidebar(context);
   provider = new ChatViewProvider(context);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider('devinCliChat.chatView', provider, { webviewOptions: { retainContextWhenHidden: true } }));
   context.subscriptions.push(vscode.commands.registerCommand('devinCliChat.abrirPainel', async () => vscode.commands.executeCommand('workbench.view.extension.devinCliChat')));
@@ -2206,5 +2231,5 @@ function deactivate() {
 module.exports = {
   activate,
   deactivate,
-  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, skillNameFromMarkdownFile, importSkillMarkdownFile, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown }
+  _internal: { baseArgs, fullPrompt, runIntegrated, modelsForUi, scanAgents, scanSkills, skillNameFromMarkdownFile, importSkillMarkdownFile, loadHistory, saveHistory, sanitizeModel, isSafeModelId, cancelIntegratedRun, automaticEditorContext, resolveWorkspacePathSafe, registerRunState, unregisterRunState, activeRunIds, createNonce, validateWebviewMessage, expandSlashCommand, exportSessionMarkdown, shouldApplyFirstInstallRightSidebar, applyFirstInstallRightSidebar }
 };

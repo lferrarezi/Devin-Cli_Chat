@@ -46,6 +46,8 @@ const mockConfigValues = {
   modoContextoEditorAutomatico: 'selecao-ou-arquivo',
   limiteBytesContextoEditorAutomatico: 200000,
 };
+const mockGlobalState = new Map();
+const mockConfigUpdates = [];
 
 const mockVscode = {
   workspace: {
@@ -54,7 +56,7 @@ const mockVscode = {
         const v = mockConfigValues[key];
         return v !== undefined ? v : def;
       },
-      update: async () => {},
+      update: async (key, value, target) => { mockConfigUpdates.push({ section: _ext, key, value, target }); },
     }),
     workspaceFolders: null,
     onDidChangeConfiguration: () => ({ dispose: () => {} }),
@@ -146,6 +148,7 @@ const {
   validateWebviewMessage,
   expandSlashCommand,
   exportSessionMarkdown,
+  shouldApplyFirstInstallRightSidebar,
 } = ext._internal;
 
 // ── Mini runner de testes ─────────────────────────────────────────────────────
@@ -694,6 +697,25 @@ test('exportSessionMarkdown gera markdown com metadados e mensagens', () => {
   assert.ok(md.includes('## Assistant'));
 });
 
+// ── Testes: layout inicial ───────────────────────────────────────────────────
+console.log('\n── layout inicial ──');
+
+test('shouldApplyFirstInstallRightSidebar aplica apenas sem flag e sem historico', () => {
+  const context = {
+    globalState: {
+      get: (key) => mockGlobalState.get(key),
+    },
+  };
+  mockGlobalState.clear();
+  assert.strictEqual(shouldApplyFirstInstallRightSidebar(context), true);
+  mockGlobalState.set('devinCliChat.chatHistory.v1', [{ id: 'sess-1' }]);
+  assert.strictEqual(shouldApplyFirstInstallRightSidebar(context), false);
+  mockGlobalState.clear();
+  mockGlobalState.set('devinCliChat.firstInstallLayout.v1', true);
+  assert.strictEqual(shouldApplyFirstInstallRightSidebar(context), false);
+  mockGlobalState.clear();
+});
+
 // ── Teste: activate smoke ─────────────────────────────────────────────────────
 console.log('\n── activate smoke ──');
 
@@ -704,8 +726,8 @@ test('activate não lança exceção e registra subscriptions', () => {
     extensionPath: path.join(__dirname, '..'),
     extensionUri: mockVscode.Uri.file(path.join(__dirname, '..')),
     globalState: {
-      get: () => undefined,
-      update: async () => {},
+      get: (key) => mockGlobalState.get(key),
+      update: async (key, value) => { mockGlobalState.set(key, value); },
       setKeysForSync: () => {},
       keys: () => [],
     },

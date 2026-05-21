@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.9.4
+
+- Troca o icone de Tools por uma chave inglesa.
+- Mantem os botoes do composer com icone + texto tambem em telas estreitas, usando rolagem horizontal quando necessario.
+
 ## 1.9.3
 
 - Adiciona importacao de arquivo Markdown como agente, copiando para `.devin/agents/<nome>/AGENT.md`.

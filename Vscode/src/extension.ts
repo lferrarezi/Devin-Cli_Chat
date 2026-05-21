@@ -1511,6 +1511,7 @@ class ChatViewProvider {
       bot: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5.5" width="10" height="7" rx="1.5"/><path d="M8 3v2.5M5.5 8.5h.01M10.5 8.5h.01M2 9.5v1.5M14 9.5v1.5"/></svg>',
       mode: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5.5h12M2 8h8M2 10.5h10"/></svg>',
       sparkle: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2l1.2 3.4L12.5 6.5 9.2 7.6 8 11l-1.2-3.4L3.5 6.5 6.8 5.4z"/></svg>',
+      wrench: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M10.8 2.2a3.2 3.2 0 0 0-3.7 4.1L2.6 10.8a1.7 1.7 0 0 0 2.4 2.4l4.5-4.5a3.2 3.2 0 0 0 4.1-3.7l-2.2 2.2-2.1-.5-.5-2.1z"/></svg>',
       caret: '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M5 3l6 5-6 5z"/></svg>'
     };
     const MODEL_TREE = [
@@ -1565,8 +1566,9 @@ button,select,textarea{font:inherit;color:inherit}
 .inputLine{display:flex;align-items:flex-start;gap:8px;padding:8px 8px 0 8px}
 .mention{height:24px;border-radius:6px;background:var(--active);color:var(--active-fg);padding:3px 6px;font-size:12px}
 textarea{width:100%;min-height:62px;max-height:200px;resize:none;background:transparent;color:var(--input-fg);border:0;outline:0;padding:3px 0 8px 0;line-height:1.4}
-.composerBar{display:flex;align-items:center;gap:6px;padding:6px 8px 8px 8px;border-top:1px solid var(--border)}
-.chipBtn{height:26px;border:0;background:transparent;color:var(--muted);border-radius:6px;padding:0 7px;display:inline-flex;align-items:center;gap:5px;font-size:11px;white-space:nowrap;cursor:pointer;flex:0 0 auto}
+.composerBar{display:flex;align-items:center;gap:6px;padding:6px 8px 8px 8px;border-top:1px solid var(--border);overflow-x:auto;scrollbar-width:none}
+.composerBar::-webkit-scrollbar{display:none}
+.chipBtn{height:26px;border:0;background:transparent;color:var(--muted);border-radius:6px;padding:0 8px;display:inline-flex;align-items:center;gap:5px;font-size:11px;white-space:nowrap;cursor:pointer;flex:0 0 auto;min-width:max-content}
 .chipBtn:hover{background:var(--hover);color:var(--fg)}
 .chipBtn:disabled{opacity:.6;cursor:not-allowed}
 .chipBtn.has{color:var(--fg)}
@@ -1641,8 +1643,8 @@ textarea{width:100%;min-height:62px;max-height:200px;resize:none;background:tran
 .suggestItem:hover,.suggestItem.active{background:var(--hover)}
 .suggestItem .title{color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .suggestItem .desc{color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-body.narrow .chipBtn .chipText{display:none}
-body.narrow .chipBtn{padding:0 6px;width:30px;justify-content:center}
+body.narrow .chipBtn .chipText{display:inline}
+body.narrow .chipBtn{padding:0 7px;width:auto;justify-content:center}
 body.narrow .chipBtn.alwaysText .chipText{display:inline}
 body.narrow .chipBtn.alwaysText{width:auto;padding:0 9px}
 body.narrow .tokenInfo{display:none}
@@ -1689,7 +1691,7 @@ body.narrow .modelLockBadge.show span{display:none}
       <button type="button" class="chipBtn" data-action="openAgentMenu" id="agentChip" title="Agente">${ICONS.bot}<span class="chipText" id="agentChipText">Agente</span><span class="caret">${ICONS.caret}</span></button>
       <button type="button" class="chipBtn" data-action="openModeMenu" id="modeChip" title="Modo">${ICONS.mode}<span class="chipText" id="modeChipText">Modo</span><span class="caret">${ICONS.caret}</span></button>
       <button type="button" class="chipBtn" data-action="openSkillsMenu" id="skillsBtn" title="Skills">${ICONS.sparkle}<span class="chipText">Skills <span id="skillsCount">0</span></span></button>
-      <button type="button" class="chipBtn" data-action="openToolsMenu" id="toolsBtn" title="Tools">${ICONS.terminal}<span class="chipText">Tools <span id="toolsCount">0</span></span></button>
+      <button type="button" class="chipBtn" data-action="openToolsMenu" id="toolsBtn" title="Tools">${ICONS.wrench}<span class="chipText">Tools <span id="toolsCount">0</span></span></button>
       <span class="barSpacer"></span>
       <span class="busyDot"></span>
       <span class="tokenPie" id="tokenPie" title="Tokens"></span>
